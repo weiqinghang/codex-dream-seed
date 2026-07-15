@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex Dream Validation Contract",
+  "type": "object",
+  "required": [
+    "applies_when",
+    "expected_behavior",
+    "observable_signals",
+    "success_criteria",
+    "failure_signals",
+    "eligible_sessions_target",
+    "max_validation_days"
+  ],
+  "properties": {
+    "applies_when": {"type": "string"},
+    "expected_behavior": {"type": "string"},
+    "observable_signals": {"type": "array", "items": {"type": "string"}},
+    "success_criteria": {"type": "array", "items": {"type": "string"}},
+    "failure_signals": {"type": "array", "items": {"type": "string"}},
+    "eligible_sessions_target": {"type": "integer", "minimum": 1},
+    "max_validation_days": {"type": "integer", "minimum": 1}
+  },
+  "additionalProperties": false
+}

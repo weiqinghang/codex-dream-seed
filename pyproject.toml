@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-dream-seed"
+version = "0.1.0"
+description = "A local-first, incremental learning system for Codex sessions"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "weiqinghang" }]
+keywords = ["codex", "agents", "retrospective", "local-first", "knowledge-management"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.11",
+]
+dependencies = []
+
+[project.scripts]
+codex-dream = "codex_dream.cli:main"
+codex-dream-review = "codex_dream.review:main"
+codex-dream-knowledge = "codex_dream.knowledge:main"
+
+[project.urls]
+Homepage = "https://github.com/weiqinghang/codex-dream-seed"
+Repository = "https://github.com/weiqinghang/codex-dream-seed"
+
+[tool.setuptools]
+packages = ["codex_dream"]

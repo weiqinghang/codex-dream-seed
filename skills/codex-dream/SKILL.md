@@ -1,0 +1,61 @@
+---
+name: codex-dream
+description: Incrementally review local Codex sessions as task trees, preserve effective practices, identify reusable work and shorter alternatives to detours, and maintain evidence-backed candidate knowledge without exposing private rollout data. Use when the user asks to "开始做梦", review recent Codex collaboration, build or update a Dream baseline, inspect pending session increments, generate a periodic Dream report, or collect validation evidence for previously adopted improvements.
+---
+
+# Codex Dream
+
+Use the installed `codex-dream` commands as the deterministic data plane. Keep semantic
+judgment in this workflow and mutable data in the user's initialized workspace.
+
+## Establish scope
+
+1. Locate the workspace from the user's path or current directory.
+2. Read `dream.toml` and run `codex-dream --workspace <path> doctor`.
+3. If the workspace is absent, run `codex-dream init <path>`.
+4. State the time range, project scope and exclusions before reading sessions.
+5. On the first run, execute a 30-day dry-run preview and stop for confirmation before
+   writing the ledger. After confirmation, establish the 30-day ledger but review only
+   the latest 7 days first.
+
+## Build the review batch
+
+Run:
+
+```bash
+codex-dream --workspace <path> --since-days <days> sync
+codex-dream --workspace <path> --since-days <days> pending
+codex-dream-review --workspace <path>
+```
+
+Treat a parent rollout and native sub-agent rollouts as one review unit. Load only the
+saved capsule, the configured overlap, new events, and linked observation IDs. For a
+`reconcile` item, reread the affected rollout rather than trusting the old cursor.
+
+Read [references/review-protocol.md](references/review-protocol.md) before semantic
+review. Read [references/privacy.md](references/privacy.md) before writing shareable
+artifacts. Read [references/knowledge-lifecycle.md](references/knowledge-lifecycle.md)
+when creating or updating knowledge. Read [references/report-format.md](references/report-format.md)
+when producing a cycle report.
+
+## Persist before checkpointing
+
+For each review unit:
+
+1. Record observations and candidates with stable `TASK-*` evidence references.
+2. Update an existing knowledge item when the pattern already exists; do not create a
+   duplicate title for new evidence.
+3. Write the sanitized report or knowledge artifact.
+4. Run `codex-dream --workspace <path> privacy-audit`.
+5. Only after the artifact exists and passes the audit, checkpoint every rollout actually
+   reviewed with a private redacted capsule and linked observation IDs.
+
+Never checkpoint merely because a task is quiet or long enough. Never count sibling
+sub-agents as independent repetitions.
+
+## Stop at the human gate
+
+Create and update only `proposed` candidates unless the user supplies a traceable decision.
+Do not modify external projects, install generated Skills, edit `AGENTS.md`, schedule jobs,
+or apply candidates during a Dream run. Present a small set of high-value candidates and
+wait for the user to accept, reject, continue observing, or request more evidence.

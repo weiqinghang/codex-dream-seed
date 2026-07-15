@@ -1,0 +1,15 @@
+.DS_Store
+.venv/
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# This repository contains the engine and templates, never a user's dream data.
+state/
+knowledge/items/*
+!knowledge/items/.gitkeep
+reports/**/*.md
