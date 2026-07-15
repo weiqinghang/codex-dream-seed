@@ -62,6 +62,7 @@ class KnowledgeLifecycleTests(unittest.TestCase):
 
         self.assertEqual(first["knowledge_id"], "KD-0001")
         self.assertEqual(second["knowledge_id"], "KD-0002")
+        self.assertEqual(first["schema_version"], 1)
         self.assertEqual(first["maturity"], "observed")
         timeline = (
             self.root / "items/KD-0001/timeline.jsonl"
@@ -87,7 +88,7 @@ class KnowledgeLifecycleTests(unittest.TestCase):
             {
                 "summary": "The agent read AGENTS.md before the first edit.",
                 "polarity": "positive",
-                "review_unit_id": "TASK-0042",
+                "task_refs": ["TASK-0042"],
                 "evidence": ["TASK-0042: rules were read before the first edit"],
             },
             occurred_at="2026-07-14T10:00:00Z",

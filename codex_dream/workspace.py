@@ -9,6 +9,8 @@ from typing import Any
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "workspace_schema": 1,
+    "knowledge_schema": 1,
     "codex_home": "~/.codex",
     "baseline_days": 30,
     "deep_review_days": 7,
@@ -20,6 +22,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 CONFIG_TEXT = """# Codex Dream workspace configuration
+[format]
+workspace_schema = 1
+knowledge_schema = 1
+
 [source]
 codex_home = "~/.codex"
 
@@ -42,6 +48,18 @@ __pycache__/
 *.py[cod]
 """
 
+WORKSPACE_AGENTS_TEXT = """# Codex Dream workspace
+
+This directory contains one user's private Dream runtime state and sanitized knowledge.
+
+- Use the `codex-dream` Skill and CLI for Dream reviews and migrations.
+- Keep `state/` private and outside Git.
+- Commit only sanitized `dream.toml`, `knowledge/`, `reports/`, and personal `tools/`.
+- Do not advance session cursors before semantic review artifacts are persisted.
+- Do not change candidate decisions, adoption, or final validation without a traceable human decision.
+- Refuse normal writes when workspace or knowledge schema migration is required.
+"""
+
 
 def load_config(workspace: Path) -> dict[str, Any]:
     config = dict(DEFAULT_CONFIG)
@@ -52,6 +70,10 @@ def load_config(workspace: Path) -> dict[str, Any]:
     parser.read(path)
     source = parser["source"] if parser.has_section("source") else {}
     review = parser["review"] if parser.has_section("review") else {}
+    format_section = parser["format"] if parser.has_section("format") else {}
+    for key in ("workspace_schema", "knowledge_schema"):
+        if key in format_section:
+            config[key] = int(format_section[key])
     configured_home = source.get("codex_home", str(config["codex_home"]))
     try:
         config["codex_home"] = ast.literal_eval(configured_home)
@@ -99,8 +121,10 @@ def init_workspace(path: Path) -> dict[str, Any]:
     files = {
         "dream.toml": CONFIG_TEXT,
         ".gitignore": GITIGNORE_TEXT,
+        "AGENTS.md": WORKSPACE_AGENTS_TEXT,
         "knowledge/index.json": json.dumps(
             {
+                "schema_version": 1,
                 "items": [],
                 "next_ids": {
                     prefix: 1
@@ -138,9 +162,17 @@ def doctor_workspace(path: Path, codex_home: Path) -> dict[str, Any]:
             (codex_home / name).is_dir() for name in ("sessions", "archived_sessions")
         ),
     }
+    from .schema import compatibility
+
+    schema = compatibility(path)
     return {
         "workspace": str(path),
         "codex_home": str(codex_home),
-        "status": "ok" if all(checks.values()) else "needs_attention",
+        "status": (
+            "ok"
+            if all(checks.values()) and schema["status"] == "current"
+            else "needs_attention"
+        ),
         "checks": checks,
+        "schema": schema,
     }

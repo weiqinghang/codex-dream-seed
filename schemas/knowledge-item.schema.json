@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-dream.local/schemas/knowledge-item-v1.schema.json",
+  "title": "Codex Dream knowledge item V1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "knowledge_id",
+    "title",
+    "kind",
+    "scope",
+    "maturity",
+    "summary",
+    "observations",
+    "candidates",
+    "decisions",
+    "adoptions",
+    "validations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "knowledge_id": { "type": "string", "pattern": "^KD-[0-9]{4,}$" },
+    "title": { "type": "string", "minLength": 1 },
+    "kind": {
+      "enum": ["effective_practice", "reusable_work", "detour_improvement"]
+    },
+    "scope": { "enum": ["session", "project", "cross_project", "global"] },
+    "maturity": { "enum": ["observed", "emerging", "established", "retired"] },
+    "summary": { "type": "string" },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["observation_id", "task_refs", "evidence"],
+        "properties": {
+          "observation_id": { "type": "string", "pattern": "^OBS-[0-9]{4,}$" },
+          "task_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^TASK-" }
+          },
+          "evidence": { "type": "array" }
+        }
+      }
+    },
+    "candidates": { "type": "array" },
+    "decisions": { "type": "array" },
+    "adoptions": { "type": "array" },
+    "validations": { "type": "array" }
+  }
+}

@@ -16,6 +16,8 @@ from .ledger import (
     write_ledger,
 )
 from .privacy import audit_shareable_outputs
+from .migrations import MigrationError, migrate_legacy_workspace, verify_workspace
+from .schema import require_current_workspace
 from .workspace import codex_home_from, doctor_workspace, init_workspace, load_config
 
 
@@ -55,6 +57,26 @@ def _parser() -> argparse.ArgumentParser:
     subcommands.add_parser("doctor", help="Check workspace and local Codex sources")
     subcommands.add_parser(
         "privacy-audit", help="Scan shareable outputs for paths, UUIDs and likely secrets"
+    )
+    subcommands.add_parser(
+        "verify", help="Verify schema versions, references, IDs, lifecycles and privacy"
+    )
+
+    migrate = subcommands.add_parser(
+        "migrate", help="Plan or apply a registered adjacent-schema migration chain"
+    )
+    migrate.add_argument("--source", type=Path, required=True)
+    migrate.add_argument("--target", type=Path, required=True)
+    migrate.add_argument(
+        "--resolutions",
+        type=Path,
+        default=None,
+        help="Private JSON file with explicit resolutions for ambiguous legacy records",
+    )
+    migrate.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply to a new target workspace; default is a read-only dry-run",
     )
 
     sync = subcommands.add_parser(
@@ -146,6 +168,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(init_workspace(target))
         return 0
 
+    if args.command == "migrate":
+        resolutions = {}
+        if args.resolutions:
+            resolutions = json.loads(args.resolutions.expanduser().read_text())
+        try:
+            result = migrate_legacy_workspace(
+                args.source,
+                args.target,
+                apply=args.apply,
+                resolutions=resolutions,
+            )
+        except MigrationError as error:
+            raise SystemExit(str(error)) from error
+        _print_json(result)
+        return 0
+
     config = load_config(workspace)
     codex_home = args.codex_home.expanduser() if args.codex_home else codex_home_from(config)
     ledger_path = args.ledger or workspace / "state/session-ledger.jsonl"
@@ -160,8 +198,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(result)
         return 0 if result["status"] == "clean" else 1
 
+    if args.command == "verify":
+        result = verify_workspace(workspace)
+        _print_json(result)
+        return 0 if result["status"] == "ok" else 1
+
     if not (workspace / "dream.toml").exists():
-        raise SystemExit(f"not a Codex Dream workspace: {workspace}; run 'codex-dream init' first")
+        if not (workspace / "knowledge/index.json").exists():
+            raise SystemExit(
+                f"not a Codex Dream workspace: {workspace}; run 'codex-dream init' first"
+            )
+    try:
+        require_current_workspace(workspace)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
     if args.command == "sync":
         records = _synced(codex_home, ledger_path, args.since_days)

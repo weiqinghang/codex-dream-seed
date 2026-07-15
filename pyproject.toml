@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-dream-seed"
-version = "0.1.0"
+version = "0.2.0"
 description = "A local-first, incremental learning system for Codex sessions"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -30,4 +30,4 @@ Homepage = "https://github.com/weiqinghang/codex-dream-seed"
 Repository = "https://github.com/weiqinghang/codex-dream-seed"
 
 [tool.setuptools]
-packages = ["codex_dream"]
+packages = { find = { include = ["codex_dream*"] } }

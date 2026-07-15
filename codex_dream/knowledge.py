@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from .schema import CURRENT_KNOWLEDGE_SCHEMA
+
 
 PREFIXES = ("KD", "EVT", "OBS", "CAN", "DEC", "ADP", "VAL", "EVD")
 KINDS = {"effective_practice", "reusable_work", "detour_improvement"}
@@ -56,7 +58,11 @@ def _now() -> str:
 
 
 def _default_index() -> dict[str, Any]:
-    return {"next_ids": {prefix: 1 for prefix in PREFIXES}, "items": []}
+    return {
+        "schema_version": CURRENT_KNOWLEDGE_SCHEMA,
+        "next_ids": {prefix: 1 for prefix in PREFIXES},
+        "items": [],
+    }
 
 
 def _atomic_text(path: Path, content: str) -> None:
@@ -145,6 +151,7 @@ def create_knowledge(
     knowledge_id = _allocate(index, "KD")
     event_id = _allocate(index, "EVT")
     item = {
+        "schema_version": CURRENT_KNOWLEDGE_SCHEMA,
         "knowledge_id": knowledge_id,
         "title": title,
         "kind": kind,
@@ -210,13 +217,13 @@ def record_event(
     if event_type == "observation_added":
         _require_fields(
             payload,
-            {"summary", "polarity", "review_unit_id", "evidence"},
+            {"summary", "polarity", "task_refs", "evidence"},
             "observation",
         )
         if payload["polarity"] not in POLARITIES:
             raise ValueError(f"unsupported observation polarity: {payload['polarity']}")
-        if not str(payload["review_unit_id"]).startswith("TASK-"):
-            raise ValueError("observation review_unit_id must be a private TASK-* reference")
+        if any(not str(value).startswith("TASK-") for value in payload["task_refs"]):
+            raise ValueError("observation task_refs must contain only private TASK-* references")
         payload.setdefault("observation_id", _allocate(index, "OBS"))
         payload.setdefault("observed_at", timestamp)
         item["observations"].append(payload)
@@ -393,7 +400,7 @@ def render_lifecycle(item: dict[str, Any]) -> str:
         for candidate in candidates:
             lines.append(
                 f"- `{candidate['candidate_id']}` [{candidate['status']}] "
-                f"{candidate.get('title', '')} ({candidate.get('artifact_type', 'unknown')})"
+                f"{candidate.get('title', '')} ({candidate.get('suggested_artifact', 'unknown')})"
             )
     else:
         lines.append("- 暂无")

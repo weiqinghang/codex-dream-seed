@@ -18,6 +18,13 @@ judgment in this workflow and mutable data in the user's initialized workspace.
    writing the ledger. After confirmation, establish the 30-day ledger but review only
    the latest 7 days first.
 
+If `doctor` reports `migration_required`, stop normal Dream writes and use the CLI's
+`migrate` dry-run against a new target workspace. Execute the registered adjacent
+migration chain in order; do not combine steps ad hoc. Require explicit private
+resolutions for ambiguous legacy records, apply only when `can_apply` is true, then run
+`verify` before switching the user to the new workspace. See
+`references/schema-migrations.md`.
+
 ## Build the review batch
 
 Run:
