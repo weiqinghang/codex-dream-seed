@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Dream"
-  short_description: "从本机 Codex 会话中提炼可验证的协作知识与改进候选"
-  default_prompt: "使用 $codex-dream 对最近的本机 Codex 任务进行增量复盘，只生成待确认候选。"
+  short_description: "从任意项目增量提炼本机 Codex 协作知识与候选"
+  default_prompt: "使用 $codex-dream 从已配置的默认 workspace 开始增量做梦，只生成待确认候选。"

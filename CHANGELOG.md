@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Resolve the same default Dream workspace from any project directory through an explicit
+  argument, environment override, enclosing workspace or machine-level pointer.
+- Add `set-default`, `show-default` and `init --set-default` commands.
+- Fail closed instead of silently treating an ordinary project directory as Dream storage.
+- Align all three CLIs and the bundled Skill with the same workspace-selection contract.
+
 ## 0.2.0 - 2026-07-15
 
 - Version workspace and knowledge persistence independently from the package.

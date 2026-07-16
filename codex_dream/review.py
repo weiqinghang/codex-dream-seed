@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .ledger import checkpoint, load_ledger, pending_range, write_ledger
+from .workspace import resolve_workspace
 
 
 def _parse_time(value: str) -> datetime:
@@ -360,7 +361,7 @@ def checkpoint_review_cards(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Build private task-tree review cards.")
-    parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--workspace", type=Path, default=None)
     parser.add_argument("--ledger", type=Path, default=None)
     parser.add_argument(
         "--session-index", type=Path, default=None
@@ -374,7 +375,10 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    workspace = args.workspace.expanduser()
+    try:
+        workspace, _ = resolve_workspace(args.workspace)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
     ledger = args.ledger or workspace / "state/session-ledger.jsonl"
     session_index = args.session_index or Path("~/.codex/session_index.jsonl").expanduser()
     output_path = args.output or workspace / "state/review-cards.jsonl"

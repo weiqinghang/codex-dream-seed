@@ -6,6 +6,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from codex_dream.cli import main
 from codex_dream.workspace import init_workspace
@@ -167,6 +168,29 @@ class CliTests(unittest.TestCase):
         self.assertEqual(pending["read_from_line"], 3)
         self.assertEqual(pending["new_from_line"], 5)
         self.assertEqual(pending["context_capsule"], "task context")
+
+    def test_default_pointer_makes_doctor_independent_of_current_directory(self):
+        config_home = self.root / "dream-config"
+        output = io.StringIO()
+        with patch.dict(
+            os.environ,
+            {"CODEX_DREAM_HOME": str(config_home)},
+            clear=False,
+        ):
+            os.environ.pop("CODEX_DREAM_WORKSPACE", None)
+            with redirect_stdout(output):
+                self.assertEqual(main(["set-default", str(self.root)]), 0)
+            configured = json.loads(output.getvalue())
+            self.assertEqual(configured["workspace"], str(self.root))
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                exit_code = main(["--codex-home", str(self.home), "doctor"])
+            result = json.loads(output.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(result["workspace"], str(self.root))
+        self.assertEqual(result["workspace_source"], "default_pointer")
 
 
 if __name__ == "__main__":

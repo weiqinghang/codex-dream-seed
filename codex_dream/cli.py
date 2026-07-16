@@ -18,7 +18,16 @@ from .ledger import (
 from .privacy import audit_shareable_outputs
 from .migrations import MigrationError, migrate_legacy_workspace, verify_workspace
 from .schema import require_current_workspace
-from .workspace import codex_home_from, doctor_workspace, init_workspace, load_config
+from .workspace import (
+    codex_home_from,
+    configured_default_workspace,
+    default_workspace_pointer,
+    doctor_workspace,
+    init_workspace,
+    load_config,
+    resolve_workspace,
+    set_default_workspace,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -28,8 +37,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace",
         type=Path,
-        default=Path.cwd(),
-        help="Workspace containing dream.toml, state, knowledge and reports",
+        default=None,
+        help=(
+            "Workspace containing dream.toml, state, knowledge and reports; "
+            "overrides CODEX_DREAM_WORKSPACE and the configured default"
+        ),
     )
     parser.add_argument(
         "--codex-home",
@@ -53,6 +65,19 @@ def _parser() -> argparse.ArgumentParser:
 
     initialize = subcommands.add_parser("init", help="Initialize a new data workspace")
     initialize.add_argument("path", nargs="?", type=Path, default=None)
+    initialize.add_argument(
+        "--set-default",
+        action="store_true",
+        help="Register the initialized workspace as this machine's default",
+    )
+
+    configure = subcommands.add_parser(
+        "set-default", help="Register an initialized workspace as the machine default"
+    )
+    configure.add_argument("path", type=Path)
+    subcommands.add_parser(
+        "show-default", help="Show the machine-level default workspace pointer"
+    )
 
     subcommands.add_parser("doctor", help="Check workspace and local Codex sources")
     subcommands.add_parser(
@@ -161,11 +186,32 @@ def _inventory_counts(records):
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    workspace = args.workspace.expanduser()
 
     if args.command == "init":
-        target = (args.path or workspace).expanduser()
-        _print_json(init_workspace(target))
+        target = args.path or args.workspace or Path.cwd()
+        result = init_workspace(target)
+        if args.set_default:
+            result["default"] = set_default_workspace(target)
+        _print_json(result)
+        return 0
+
+    if args.command == "set-default":
+        try:
+            result = set_default_workspace(args.path)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        _print_json(result)
+        return 0
+
+    if args.command == "show-default":
+        configured = configured_default_workspace()
+        _print_json(
+            {
+                "pointer": str(default_workspace_pointer()),
+                "workspace": str(configured) if configured is not None else None,
+                "configured": configured is not None,
+            }
+        )
         return 0
 
     if args.command == "migrate":
@@ -184,12 +230,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_json(result)
         return 0
 
+    try:
+        workspace, workspace_source = resolve_workspace(args.workspace)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+
     config = load_config(workspace)
     codex_home = args.codex_home.expanduser() if args.codex_home else codex_home_from(config)
     ledger_path = args.ledger or workspace / "state/session-ledger.jsonl"
 
     if args.command == "doctor":
         result = doctor_workspace(workspace, codex_home)
+        result["workspace_source"] = workspace_source
         _print_json(result)
         return 0 if result["status"] == "ok" else 1
 

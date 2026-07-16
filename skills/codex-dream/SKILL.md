@@ -10,13 +10,21 @@ judgment in this workflow and mutable data in the user's initialized workspace.
 
 ## Establish scope
 
-1. Locate the workspace from the user's path or current directory.
-2. Read `dream.toml` and run `codex-dream --workspace <path> doctor`.
-3. If the workspace is absent, run `codex-dream init <path>`.
-4. State the time range, project scope and exclusions before reading sessions.
-5. On the first run, execute a 30-day dry-run preview and stop for confirmation before
+1. Resolve the workspace with `codex-dream doctor`. The CLI uses an explicit
+   `--workspace`, `CODEX_DREAM_WORKSPACE`, an initialized workspace containing the current
+   directory, then the machine default registered by `codex-dream set-default`.
+2. Read the resolved workspace's `dream.toml` and confirm `doctor` reports `status: ok`.
+3. If resolution fails, stop and ask the user to select or initialize a workspace. Never
+   initialize the current project merely because the command was invoked there.
+4. Treat the current directory as instruction context, not storage selection. It does not
+   restrict review to the current project unless the user explicitly requests that scope.
+5. State the time range, project scope and exclusions before reading sessions.
+6. On the first run, execute a 30-day dry-run preview and stop for confirmation before
    writing the ledger. After confirmation, establish the 30-day ledger but review only
    the latest 7 days first.
+
+Keep real sessions and Dream results out of the distributable seed repository. If invoked
+from the seed source tree, use the resolved external workspace for every mutable artifact.
 
 If `doctor` reports `migration_required`, stop normal Dream writes and use the CLI's
 `migrate` dry-run against a new target workspace. Execute the registered adjacent
@@ -30,10 +38,13 @@ resolutions for ambiguous legacy records, apply only when `can_apply` is true, t
 Run:
 
 ```bash
-codex-dream --workspace <path> --since-days <days> sync
-codex-dream --workspace <path> --since-days <days> pending
-codex-dream-review --workspace <path>
+codex-dream --since-days <days> sync
+codex-dream --since-days <days> pending
+codex-dream-review
 ```
+
+Pass `--workspace <path>` only for an intentional one-run override. Do not infer a
+current-project-only review from the shell working directory.
 
 Treat a parent rollout and native sub-agent rollouts as one review unit. Load only the
 saved capsule, the configured overlap, new events, and linked observation IDs. For a
@@ -53,7 +64,7 @@ For each review unit:
 2. Update an existing knowledge item when the pattern already exists; do not create a
    duplicate title for new evidence.
 3. Write the sanitized report or knowledge artifact.
-4. Run `codex-dream --workspace <path> privacy-audit`.
+4. Run `codex-dream privacy-audit`.
 5. Only after the artifact exists and passes the audit, checkpoint every rollout actually
    reviewed with a private redacted capsule and linked observation IDs.
 

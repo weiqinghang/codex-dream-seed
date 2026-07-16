@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .schema import CURRENT_KNOWLEDGE_SCHEMA
+from .workspace import resolve_workspace
 
 
 PREFIXES = ("KD", "EVT", "OBS", "CAN", "DEC", "ADP", "VAL", "EVD")
@@ -439,7 +440,7 @@ def render_lifecycle(item: dict[str, Any]) -> str:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage Codex Dream knowledge lifecycles.")
-    parser.add_argument("--workspace", type=Path, default=Path.cwd())
+    parser.add_argument("--workspace", type=Path, default=None)
     parser.add_argument("--root", type=Path, default=None)
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -463,7 +464,14 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    root = args.root or args.workspace.expanduser() / "knowledge"
+    if args.root is not None:
+        root = args.root.expanduser()
+    else:
+        try:
+            workspace, _ = resolve_workspace(args.workspace)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        root = workspace / "knowledge"
     if args.command == "create":
         item = create_knowledge(root, args.title, args.kind, args.scope, args.summary)
         print(json.dumps(item, ensure_ascii=False, indent=2, sort_keys=True))

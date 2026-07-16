@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
-import os
 import ast
 import configparser
+import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,109 @@ This directory contains one user's private Dream runtime state and sanitized kno
 - Do not change candidate decisions, adoption, or final validation without a traceable human decision.
 - Refuse normal writes when workspace or knowledge schema migration is required.
 """
+
+WORKSPACE_ENV = "CODEX_DREAM_WORKSPACE"
+CONFIG_HOME_ENV = "CODEX_DREAM_HOME"
+
+
+def _absolute_without_resolving(path: Path, cwd: Path | None = None) -> Path:
+    path = Path(path).expanduser()
+    if path.is_absolute():
+        return path
+    return (Path(cwd) if cwd is not None else Path.cwd()) / path
+
+
+def is_workspace(path: Path) -> bool:
+    path = Path(path).expanduser()
+    return (path / "dream.toml").is_file() and (
+        path / "knowledge/index.json"
+    ).is_file()
+
+
+def find_workspace(start: Path | None = None) -> Path | None:
+    current = _absolute_without_resolving(start or Path.cwd())
+    if current.is_file():
+        current = current.parent
+    for candidate in (current, *current.parents):
+        if is_workspace(candidate):
+            return candidate
+    return None
+
+
+def config_home() -> Path:
+    configured = os.environ.get(CONFIG_HOME_ENV)
+    if configured:
+        return Path(configured).expanduser()
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home:
+        return Path(codex_home).expanduser() / "dream"
+    return Path("~/.codex/dream").expanduser()
+
+
+def default_workspace_pointer() -> Path:
+    return config_home() / "default-workspace"
+
+
+def configured_default_workspace() -> Path | None:
+    pointer = default_workspace_pointer()
+    if not pointer.is_file():
+        return None
+    value = pointer.read_text().strip()
+    return Path(value).expanduser() if value else None
+
+
+def resolve_workspace(
+    explicit: Path | None = None, cwd: Path | None = None
+) -> tuple[Path, str]:
+    if explicit is not None:
+        return _absolute_without_resolving(explicit, cwd), "argument"
+
+    configured_env = os.environ.get(WORKSPACE_ENV)
+    if configured_env:
+        return _absolute_without_resolving(Path(configured_env), cwd), "environment"
+
+    discovered = find_workspace(cwd)
+    if discovered is not None:
+        return discovered, "current_directory"
+
+    configured = configured_default_workspace()
+    if configured is not None:
+        return configured, "default_pointer"
+
+    raise ValueError(
+        "no Codex Dream workspace is configured; pass --workspace, set "
+        f"{WORKSPACE_ENV}, run from an initialized workspace, or run "
+        "'codex-dream set-default <workspace>'"
+    )
+
+
+def set_default_workspace(path: Path) -> dict[str, Any]:
+    workspace = _absolute_without_resolving(path)
+    if not is_workspace(workspace):
+        raise ValueError(
+            f"not an initialized Codex Dream workspace: {workspace}; "
+            "run 'codex-dream init <workspace>' first"
+        )
+
+    pointer = default_workspace_pointer()
+    pointer.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{pointer.name}.", suffix=".tmp", dir=pointer.parent
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(str(workspace) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, pointer)
+    except BaseException:
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
+        raise
+    return {"workspace": str(workspace), "pointer": str(pointer), "status": "configured"}
 
 
 def load_config(workspace: Path) -> dict[str, Any]:
