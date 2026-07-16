@@ -73,7 +73,7 @@ class BootstrapTests(unittest.TestCase):
 
             self.assertEqual(upgraded_plan["skill"]["action"], "upgrade")
             self.assertEqual(result["skill"], "upgraded")
-            self.assertIn("name: codex-dream", installed.read_text())
+            self.assertIn("name: codex-dream", installed.read_text(encoding="utf-8"))
             self.assertFalse((codex_home / "skills/codex-dream/codex-dream").exists())
 
     def test_refuses_nonempty_non_workspace_target(self):
