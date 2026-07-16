@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from codex_dream import workspace as workspace_module
 from codex_dream.workspace import (
     configured_default_workspace,
     doctor_workspace,
@@ -96,6 +97,14 @@ class WorkspaceTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "not an initialized"):
                     set_default_workspace(project)
+
+    def test_windows_default_pointer_skips_unavailable_posix_permissions(self):
+        with patch("codex_dream.workspace.os.name", "nt"), patch(
+            "codex_dream.workspace.os.fchmod", create=True
+        ) as fchmod:
+            workspace_module._restrict_private_descriptor(123)
+
+        fchmod.assert_not_called()
 
     def test_fails_closed_without_any_workspace_source(self):
         with tempfile.TemporaryDirectory() as temporary:

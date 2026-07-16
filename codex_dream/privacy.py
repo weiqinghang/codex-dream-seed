@@ -11,8 +11,13 @@ PATTERNS = {
         r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
         re.IGNORECASE,
     ),
-    "absolute_user_path": re.compile(r"(?:/Users/|/home/)[^\s\"'`]+"),
-    "codex_rollout_path": re.compile(r"(?:~|/[^\s]+)?/\.codex/(?:sessions|archived_sessions)/"),
+    "absolute_user_path": re.compile(
+        r"(?:/Users/|/home/|[A-Za-z]:[\\/]Users[\\/]"
+        r"|\\\\[^\\/\s\"'`]+[\\/][^\\/\s\"'`]+[\\/])[^\s\"'`]+"
+    ),
+    "codex_rollout_path": re.compile(
+        r"(?:~|/[^\s]+)?[\\/]\.codex[\\/](?:sessions|archived_sessions)[\\/]"
+    ),
     "probable_secret": re.compile(
         r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[opsu]_[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16})\b"
     ),

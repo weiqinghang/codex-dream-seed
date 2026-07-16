@@ -65,6 +65,11 @@ WORKSPACE_ENV = "CODEX_DREAM_WORKSPACE"
 CONFIG_HOME_ENV = "CODEX_DREAM_HOME"
 
 
+def _restrict_private_descriptor(descriptor: int) -> None:
+    if os.name != "nt" and hasattr(os, "fchmod"):
+        os.fchmod(descriptor, 0o600)
+
+
 def _absolute_without_resolving(path: Path, cwd: Path | None = None) -> Path:
     path = Path(path).expanduser()
     if path.is_absolute():
@@ -103,8 +108,8 @@ def default_workspace_pointer() -> Path:
     return config_home() / "default-workspace"
 
 
-def configured_default_workspace() -> Path | None:
-    pointer = default_workspace_pointer()
+def configured_default_workspace(pointer_path: Path | None = None) -> Path | None:
+    pointer = pointer_path or default_workspace_pointer()
     if not pointer.is_file():
         return None
     value = pointer.read_text().strip()
@@ -136,7 +141,9 @@ def resolve_workspace(
     )
 
 
-def set_default_workspace(path: Path) -> dict[str, Any]:
+def set_default_workspace(
+    path: Path, pointer_path: Path | None = None
+) -> dict[str, Any]:
     workspace = _absolute_without_resolving(path)
     if not is_workspace(workspace):
         raise ValueError(
@@ -144,13 +151,13 @@ def set_default_workspace(path: Path) -> dict[str, Any]:
             "run 'codex-dream init <workspace>' first"
         )
 
-    pointer = default_workspace_pointer()
+    pointer = pointer_path or default_workspace_pointer()
     pointer.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{pointer.name}.", suffix=".tmp", dir=pointer.parent
     )
     try:
-        os.fchmod(descriptor, 0o600)
+        _restrict_private_descriptor(descriptor)
         with os.fdopen(descriptor, "w") as handle:
             handle.write(str(workspace) + "\n")
             handle.flush()

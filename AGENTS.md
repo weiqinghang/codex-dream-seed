@@ -19,5 +19,20 @@ of real user sessions and previously generated dream results.
 - `skills/codex-dream/` is the optional semantic control plane.
 - A user-created workspace owns runtime state and learned knowledge.
 
+## Bootstrap and first run
+
+When the user asks to install, initialize, or start Dream from a fresh clone:
+
+1. Run `python3 scripts/bootstrap.py` (`py scripts\bootstrap.py` on Windows) and inspect
+   the read-only plan.
+2. If the plan targets an empty directory, an existing Dream workspace, and this checkout's
+   bundled Skill, continue with `--apply` under the user's installation request. Stop on a
+   non-empty non-Dream target or any unexpected external path.
+3. Default new personal workspaces to `~/Documents/codex-dream-workspace`. Preserve an
+   already configured valid workspace unless the user explicitly requests migration.
+4. Report the `doctor` result and the 30-day dry-run inventory. Never establish the first
+   ledger or read semantic session content until the user confirms the previewed scope.
+5. Tell the user to restart Codex after a new or upgraded Skill installation.
+
 Run `python3 -m unittest discover -s tests -v` and validate the bundled Skill
 before committing changes.

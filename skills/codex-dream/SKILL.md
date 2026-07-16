@@ -8,6 +8,11 @@ description: Incrementally review local Codex sessions as task trees, preserve e
 Use the installed `codex-dream` commands as the deterministic data plane. Keep semantic
 judgment in this workflow and mutable data in the user's initialized workspace.
 
+If the data-plane command is missing while working from a fresh seed checkout, follow the
+repository `AGENTS.md` and run `python3 scripts/bootstrap.py` before attempting a Dream run.
+On Windows, use `py scripts\bootstrap.py`. After applying the reviewed bootstrap plan, ask
+the user to restart Codex so the installed Skill becomes discoverable in new sessions.
+
 ## Establish scope
 
 1. Resolve the workspace with `codex-dream doctor`. The CLI uses an explicit
@@ -25,6 +30,8 @@ judgment in this workflow and mutable data in the user's initialized workspace.
 
 Keep real sessions and Dream results out of the distributable seed repository. If invoked
 from the seed source tree, use the resolved external workspace for every mutable artifact.
+Default a new workspace to `~/Documents/codex-dream-workspace` unless the user chooses a
+different location.
 
 If `doctor` reports `migration_required`, stop normal Dream writes and use the CLI's
 `migrate` dry-run against a new target workspace. Execute the registered adjacent

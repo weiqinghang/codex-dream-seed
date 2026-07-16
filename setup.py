@@ -9,7 +9,7 @@ ROOT = Path(__file__).parent
 
 setup(
     name="codex-dream-seed",
-    version="0.2.0",
+    version="0.3.0",
     description="A local-first, incremental learning system for Codex sessions",
     long_description=(ROOT / "README.md").read_text(),
     long_description_content_type="text/markdown",

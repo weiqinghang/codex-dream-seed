@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-07-16
 
+- Add a cross-platform, read-only-by-default bootstrap for clone-time CLI installation,
+  atomic Skill installation, workspace initialization and first-run preview.
+- Default new personal workspaces to `~/Documents/codex-dream-workspace`.
+- Support Windows permission behavior and detect Windows user and rollout paths in privacy
+  audits; add macOS, Linux and Windows CI coverage.
 - Resolve the same default Dream workspace from any project directory through an explicit
   argument, environment override, enclosing workspace or machine-level pointer.
 - Add `set-default`, `show-default` and `init --set-default` commands.

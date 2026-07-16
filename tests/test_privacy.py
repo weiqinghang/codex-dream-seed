@@ -27,13 +27,15 @@ class PrivacyAuditTests(unittest.TestCase):
             (root / "knowledge/items/leak.md").write_text(
                 "session 123e4567-e89b-42d3-a456-426614174000\n"
                 "/Users/example/.codex/sessions/rollout.jsonl\n"
+                "C:\\Users\\example\\.codex\\sessions\\rollout.jsonl\n"
+                "\\\\server\\private-share\\profiles\\example.json\n"
                 f"{secret}\n"
             )
 
             result = audit_shareable_outputs(root)
             serialized = repr(result)
             self.assertEqual(result["status"], "findings")
-            self.assertGreaterEqual(result["finding_count"], 3)
+            self.assertGreaterEqual(result["finding_count"], 6)
             self.assertNotIn(secret, serialized)
             self.assertTrue(all("path" in finding for finding in result["findings"]))
 
