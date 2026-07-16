@@ -13,3 +13,6 @@
   return to the unchanged source, not an inferred down migration.
 - A squashed fast path is acceptable only when it is a separately released and tested
   migration whose output is proven equivalent to the adjacent chain.
+- Workspace V2 moves private session, task-tree and task-reference state into
+  `state/dream.sqlite3`, archives V1 JSONL under `state/legacy-v1/`, and leaves knowledge
+  schema V1 unchanged. Verify SQLite integrity and imported counts before switching.

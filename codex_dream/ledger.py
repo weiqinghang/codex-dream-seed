@@ -237,6 +237,10 @@ def checkpoint(
 
 def load_ledger(path: Path) -> dict[str, dict[str, Any]]:
     path = Path(path)
+    from .database import is_database_path, load_sessions
+
+    if is_database_path(path):
+        return load_sessions(path)
     if not path.exists():
         return {}
     records: dict[str, dict[str, Any]] = {}
@@ -254,6 +258,11 @@ def load_ledger(path: Path) -> dict[str, dict[str, Any]]:
 
 def write_ledger(path: Path, records: dict[str, dict[str, Any]]) -> None:
     path = Path(path)
+    from .database import is_database_path, write_sessions
+
+    if is_database_path(path):
+        write_sessions(path, records)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent

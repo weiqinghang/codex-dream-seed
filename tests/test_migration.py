@@ -311,7 +311,10 @@ class AdjacentMigrationTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
         self.assertEqual(result["mode"], "dry-run")
         self.assertTrue(result["can_apply"])
-        self.assertEqual(result["migration_path"], ["knowledge-v0-to-v1"])
+        self.assertEqual(
+            result["migration_path"],
+            ["knowledge-v0-to-v1", "workspace-v1-to-v2-sqlite"],
+        )
 
     def test_apply_refuses_unresolved_or_existing_target(self):
         with self.assertRaises(MigrationError):
@@ -389,8 +392,13 @@ class AdjacentMigrationTests(unittest.TestCase):
         self.assertEqual(timeline[-1]["data"]["to_version"], 1)
         self.assertEqual(timeline[0]["type"], "knowledge_created")
 
-        self.assertTrue((self.target / "state/session-ledger.jsonl").exists())
-        self.assertTrue((self.target / "state/task-ref-map.jsonl").exists())
+        self.assertTrue((self.target / "state/dream.sqlite3").exists())
+        self.assertTrue(
+            (self.target / "state/legacy-v1/session-ledger.jsonl").exists()
+        )
+        self.assertTrue(
+            (self.target / "state/legacy-v1/task-ref-map.jsonl").exists()
+        )
         self.assertTrue((self.target / "reports/weekly/synthetic.md").exists())
         self.assertTrue((self.target / "tools/policy_drift.py").exists())
         self.assertTrue((self.target / "knowledge/migration-history.jsonl").exists())

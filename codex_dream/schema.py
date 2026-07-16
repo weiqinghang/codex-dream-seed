@@ -7,7 +7,7 @@ from .workspace import load_config
 
 
 LEGACY_SCHEMA_VERSION = 0
-CURRENT_WORKSPACE_SCHEMA = 1
+CURRENT_WORKSPACE_SCHEMA = 2
 CURRENT_KNOWLEDGE_SCHEMA = 1
 
 
@@ -48,4 +48,3 @@ def require_current_workspace(path: Path) -> None:
             f"status={result['status']} versions={result['versions']} "
             f"current={result['current']}"
         )
-

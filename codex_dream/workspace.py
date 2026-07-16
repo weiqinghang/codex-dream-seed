@@ -10,7 +10,7 @@ from typing import Any
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
-    "workspace_schema": 1,
+    "workspace_schema": 2,
     "knowledge_schema": 1,
     "codex_home": "~/.codex",
     "baseline_days": 30,
@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 CONFIG_TEXT = """# Codex Dream workspace configuration
 [format]
-workspace_schema = 1
+workspace_schema = 2
 knowledge_schema = 1
 
 [source]
@@ -256,6 +256,13 @@ def init_workspace(path: Path) -> dict[str, Any]:
         target.write_text(content, encoding="utf-8")
         created.append(relative)
 
+    from .database import database_path, initialize
+
+    database = database_path(path)
+    if not database.exists():
+        initialize(database)
+        created.append("state/dream.sqlite3")
+
     return {"workspace": str(path), "created": created, "already_initialized": not created}
 
 
@@ -278,6 +285,10 @@ def doctor_workspace(path: Path, codex_home: Path) -> dict[str, Any]:
     from .schema import compatibility
 
     schema = compatibility(path)
+    if schema["versions"]["workspace_schema"] >= 2:
+        from .database import database_path, verify_database
+
+        checks["database_ok"] = verify_database(database_path(path))["status"] == "ok"
     return {
         "workspace": str(path),
         "codex_home": str(codex_home),

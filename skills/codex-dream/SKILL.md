@@ -27,6 +27,9 @@ the user to restart Codex so the installed Skill becomes discoverable in new ses
 6. On the first run, execute a 30-day dry-run preview and stop for confirmation before
    writing the ledger. After confirmation, establish the 30-day ledger but review only
    the latest 7 days first.
+7. For an established V2 workspace, start a tracked `DREAM-*` cycle after scope is
+   confirmed. Link only task references actually reviewed, and complete the cycle only
+   after its sanitized report is persisted and passes privacy audit.
 
 Keep real sessions and Dream results out of the distributable seed repository. If invoked
 from the seed source tree, use the resolved external workspace for every mutable artifact.
@@ -41,6 +44,9 @@ resolutions for ambiguous legacy records, apply only when `can_apply` is true, t
 `references/schema-migrations.md`.
 
 ## Build the review batch
+
+Start the cycle with `codex-dream run-start --title <title> --scope <json>`. Preserve the
+returned `DREAM-*` ID for the report and final checkpoint.
 
 Run:
 
@@ -77,6 +83,10 @@ For each review unit:
 
 Never checkpoint merely because a task is quiet or long enough. Never count sibling
 sub-agents as independent repetitions.
+
+After checkpointing, link the reviewed `TASK-*` references with `codex-dream run-link`.
+Complete the cycle with `codex-dream run-complete --report <reports/...> --summary <json>`.
+Do not complete a cycle whose report is missing or has not passed privacy audit.
 
 ## Stop at the human gate
 

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Dream Console</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="rail">
+        <a class="brand" href="#overview" aria-label="Dream Console 总览">
+          <span class="brand-mark" aria-hidden="true">◐</span>
+          <span>Dream<br>Console</span>
+        </a>
+        <nav aria-label="主导航">
+          <button class="nav-item is-active" data-view="overview"><span>01</span>总览</button>
+          <button class="nav-item" data-view="runs"><span>02</span>梦境</button>
+          <button class="nav-item" data-view="tasks"><span>03</span>任务</button>
+          <button class="nav-item" data-view="knowledge"><span>04</span>知识</button>
+          <button class="nav-item" data-view="decisions"><span>05</span>决策</button>
+        </nav>
+        <div class="local-note"><i></i>仅在本机运行</div>
+      </aside>
+
+      <main>
+        <header class="topline">
+          <div>
+            <p class="eyebrow" id="eyebrow">PERSONAL LEARNING LEDGER</p>
+            <h1 id="page-title">今天的梦境脉络</h1>
+          </div>
+          <div class="workspace-chip"><span id="workspace-name">正在连接…</span><b>V2</b></div>
+        </header>
+
+        <section class="view is-visible" id="view-overview" aria-labelledby="page-title">
+          <div class="hero-grid">
+            <article class="lead-stat">
+              <p>已审阅 Session</p>
+              <strong id="reviewed-count">—</strong>
+              <div class="meter"><span id="review-meter"></span></div>
+              <small id="review-caption">正在读取本地账本</small>
+            </article>
+            <div class="signal-list" id="signal-list"></div>
+          </div>
+          <div class="section-heading"><h2>最近梦境</h2><button class="text-action" data-jump="runs">查看全部 →</button></div>
+          <div class="run-strip" id="recent-runs"></div>
+          <div class="section-heading"><h2>知识成熟度</h2><span>从观察走向验证</span></div>
+          <div class="maturity-track" id="maturity-track"></div>
+        </section>
+
+        <section class="view" id="view-runs">
+          <div class="section-heading intro"><div><p class="kicker">DREAM LOG</p><h2>每一次做梦，都留下可追踪的边界</h2></div></div>
+          <div class="timeline" id="runs-list"></div>
+        </section>
+
+        <section class="view" id="view-tasks">
+          <div class="toolbar">
+            <label class="search"><span>⌕</span><input id="task-search" placeholder="搜索任务名称或 TASK 编号"></label>
+            <select id="task-status" aria-label="筛选任务状态">
+              <option value="">全部状态</option><option value="ready">待审阅</option><option value="active">进行中</option><option value="short">短任务</option>
+            </select>
+          </div>
+          <div class="table-wrap">
+            <table><thead><tr><th>任务</th><th>项目</th><th>状态</th><th>任务树</th><th>最后变化</th></tr></thead><tbody id="task-rows"></tbody></table>
+          </div>
+        </section>
+
+        <section class="view" id="view-knowledge">
+          <div class="knowledge-layout">
+            <div class="knowledge-index" id="knowledge-index"></div>
+            <article class="knowledge-detail" id="knowledge-detail"><div class="empty-state">选择一项知识，查看它从观察到验证的完整轨迹。</div></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-decisions">
+          <div class="section-heading intro"><div><p class="kicker">HUMAN GATE</p><h2>需要你判断的候选</h2><p>系统提出证据，决定始终由你留下。</p></div></div>
+          <div class="decision-list" id="decision-list"></div>
+          <div class="section-heading"><h2>最近操作</h2><span>可追溯的人工反馈</span></div>
+          <div class="action-log" id="action-log"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="decision-dialog">
+      <form method="dialog" id="decision-form">
+        <button type="button" class="dialog-close" data-dialog-close aria-label="关闭">×</button>
+        <p class="kicker">TRACEABLE DECISION</p>
+        <h2 id="dialog-title">记录你的判断</h2>
+        <input type="hidden" id="dialog-knowledge-id"><input type="hidden" id="dialog-candidate-id"><input type="hidden" id="dialog-action">
+        <p id="dialog-copy"></p>
+        <label>判断依据<textarea id="decision-reason" required minlength="3" placeholder="为什么这样决定？这会成为可追溯记录的一部分。"></textarea></label>
+        <div class="dialog-actions"><button type="button" class="secondary" data-dialog-close>取消</button><button type="submit" value="default" id="decision-submit">确认记录</button></div>
+        <p class="form-status" id="form-status" role="status"></p>
+      </form>
+    </dialog>
+    <script src="/app.js"></script>
+  </body>
+</html>

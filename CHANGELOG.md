@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-07-16
+
+- Introduce Workspace Schema V2 with a transactional SQLite private runtime store while
+  preserving sanitized knowledge and reports as readable files.
+- Add source-preserving V1 to V2 migration, archived JSONL recovery evidence, historical
+  report import and database integrity/count verification.
+- Add first-class Dream cycles, task links and traceable local user-action audit records.
+- Add a local-only Dream Console for overview, runs, tasks, knowledge, decisions and
+  feedback without returning raw session content or full private paths to the browser.
+
 ## 0.3.0 - 2026-07-16
 
 - Add a cross-platform, read-only-by-default bootstrap for clone-time CLI installation,

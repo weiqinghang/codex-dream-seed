@@ -199,7 +199,15 @@ def install_skill(source: Path, target: Path) -> str:
 def preview_sessions(workspace: Path, codex_home: Path, days: int = 30) -> dict[str, Any]:
     cutoff = time.time() - days * 24 * 60 * 60
     discovered = discover_sessions(codex_home, updated_after=cutoff)
-    existing = load_ledger(workspace / "state/session-ledger.jsonl")
+    from .database import database_path
+    from .schema import workspace_versions
+
+    ledger = (
+        database_path(workspace)
+        if workspace_versions(workspace)["workspace_schema"] >= 2
+        else workspace / "state/session-ledger.jsonl"
+    )
+    existing = load_ledger(ledger)
     records = sync_ledger(existing, discovered)
     pending = sum(
         1

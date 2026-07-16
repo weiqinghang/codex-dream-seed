@@ -20,6 +20,7 @@ from ..schema import (
 from ..workspace import init_workspace
 from .registry import MigrationError, plan_migration
 from .v0_to_v1 import candidate_resolution_gaps, observation_resolution_gaps
+from .v1_to_v2 import MIGRATION_ID as V1_TO_V2_ID, migrate_v1_to_v2
 
 
 def _now() -> str:
@@ -45,8 +46,7 @@ def _migration_files(source: Path) -> list[Path]:
     candidates = []
     for relative in (
         "state",
-        "knowledge/items",
-        "knowledge/adoptions",
+        "knowledge",
         "reports",
     ):
         root = source / relative
@@ -78,7 +78,7 @@ def _manifest_digest(manifest: dict[str, str]) -> str:
 
 
 def _copy_tree(source: Path, target: Path) -> None:
-    for relative in ("state", "knowledge/items", "knowledge/adoptions", "reports"):
+    for relative in ("state", "knowledge", "reports"):
         source_root = source / relative
         if not source_root.exists():
             continue
@@ -91,12 +91,21 @@ def _copy_tree(source: Path, target: Path) -> None:
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)
 
-    shutil.copy2(source / "knowledge/index.json", target / "knowledge/index.json")
-    checker = source / "codex_dream/policy_drift.py"
-    if checker.exists():
-        tools = target / "tools"
-        tools.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(checker, tools / "policy_drift.py")
+    for relative in ("AGENTS.md", ".gitignore"):
+        asset = source / relative
+        if asset.is_file():
+            shutil.copy2(asset, target / relative)
+    source_tools = source / "tools"
+    if source_tools.is_dir():
+        shutil.copytree(source_tools, target / "tools", dirs_exist_ok=True)
+    else:
+        checker = source / "codex_dream/policy_drift.py"
+        if checker.exists():
+            tools = target / "tools"
+            tools.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(checker, tools / "policy_drift.py")
+    if (source / ".git").is_dir():
+        shutil.copytree(source / ".git", target / ".git", dirs_exist_ok=True)
 
 
 def _counts(root: Path) -> dict[str, int]:
@@ -105,8 +114,24 @@ def _counts(root: Path) -> dict[str, int]:
     for item_path in sorted((root / "knowledge/items").glob("KD-*/item.json")):
         items.append(json.loads(item_path.read_text(encoding="utf-8")))
         timeline_events.extend(_load_jsonl(item_path.parent / "timeline.jsonl"))
-    ledger = _load_jsonl(root / "state/session-ledger.jsonl")
-    task_map = _load_jsonl(root / "state/task-ref-map.jsonl")
+    from ..database import database_path, runtime_counts
+
+    database = database_path(root)
+    runtime = (
+        runtime_counts(database)
+        if database.exists()
+        else {
+            "ledger_sessions": len(_load_jsonl(root / "state/session-ledger.jsonl")),
+            "reviewed_sessions": sum(
+                int(record.get("reviewed_through_line", 0)) > 0
+                for record in _load_jsonl(root / "state/session-ledger.jsonl")
+            ),
+            "task_refs": len(_load_jsonl(root / "state/task-ref-map.jsonl")),
+            "review_cards": len(_load_jsonl(root / "state/review-cards.jsonl")),
+            "dream_runs": 0,
+            "user_actions": 0,
+        }
+    )
     reports = [
         path
         for path in (root / "reports").rglob("*")
@@ -125,11 +150,7 @@ def _counts(root: Path) -> dict[str, int]:
             for validation in item.get("validations", [])
         ),
         "timeline_events": len(timeline_events),
-        "ledger_sessions": len(ledger),
-        "reviewed_sessions": sum(
-            int(record.get("reviewed_through_line", 0)) > 0 for record in ledger
-        ),
-        "task_refs": len(task_map),
+        **runtime,
         "reports": len(reports),
     }
 
@@ -142,8 +163,30 @@ def inspect_legacy_workspace(
     if not (source / "knowledge/index.json").is_file():
         raise MigrationError(f"legacy source has no knowledge index: {source}")
     versions = workspace_versions(source)
+    if versions == {
+        "workspace_schema": CURRENT_WORKSPACE_SCHEMA,
+        "knowledge_schema": CURRENT_KNOWLEDGE_SCHEMA,
+    }:
+        raise MigrationError("workspace is already current")
+    if versions == {"workspace_schema": 1, "knowledge_schema": 1}:
+        return {
+            "from_schema": 1,
+            "to_schema": CURRENT_WORKSPACE_SCHEMA,
+            "from_versions": versions,
+            "to_versions": {
+                "workspace_schema": CURRENT_WORKSPACE_SCHEMA,
+                "knowledge_schema": CURRENT_KNOWLEDGE_SCHEMA,
+            },
+            "migration_path": [V1_TO_V2_ID],
+            "counts": _counts(source),
+            "unresolved_candidates": [],
+            "unacknowledged_observations": [],
+            "warnings": [],
+            "can_apply": True,
+            "source_manifest_sha256": _manifest_digest(_source_manifest(source)),
+        }
     if versions["knowledge_schema"] != 0:
-        raise MigrationError(f"expected legacy schema 0, found {versions}")
+        raise MigrationError(f"unsupported source versions: {versions}")
     unresolved = []
     unacknowledged_observations = []
     warnings = []
@@ -168,7 +211,7 @@ def inspect_legacy_workspace(
     return {
         "from_schema": 0,
         "to_schema": CURRENT_KNOWLEDGE_SCHEMA,
-        "migration_path": [step.migration_id for step in path],
+        "migration_path": [step.migration_id for step in path] + [V1_TO_V2_ID],
         "counts": _counts(source),
         "unresolved_candidates": sorted(set(unresolved)),
         "unacknowledged_observations": sorted(set(unacknowledged_observations)),
@@ -277,9 +320,12 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
     privacy = audit_shareable_outputs(workspace)
     if privacy["status"] != "clean":
         errors.append(f"privacy audit found {privacy['finding_count']} issue(s)")
+    from ..database import database_path, verify_database
+
+    database_check = verify_database(database_path(workspace))
+    if versions.get("workspace_schema") >= 2 and database_check["status"] != "ok":
+        errors.extend(database_check["errors"])
     counts = _counts(workspace)
-    if any(not path.exists() for path in (workspace / "state/session-ledger.jsonl", workspace / "state/task-ref-map.jsonl")):
-        warnings.append("private session progress files are incomplete")
     return {
         "status": "ok" if not errors else "failed",
         "versions": versions,
@@ -287,10 +333,13 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
         "errors": errors,
         "warnings": warnings,
         "privacy": privacy,
+        "database": database_check,
     }
 
 
-def _assert_invariants(before: dict[str, int], after: dict[str, int]) -> None:
+def _assert_invariants(
+    before: dict[str, int], after: dict[str, int], timeline_additions: int = 0
+) -> None:
     preserved = (
         "knowledge_items",
         "observations",
@@ -309,7 +358,7 @@ def _assert_invariants(before: dict[str, int], after: dict[str, int]) -> None:
         for key in preserved
         if before[key] != after[key]
     }
-    expected_timeline = before["timeline_events"] + before["knowledge_items"]
+    expected_timeline = before["timeline_events"] + timeline_additions
     if after["timeline_events"] != expected_timeline:
         mismatches["timeline_events"] = {
             "before": before["timeline_events"],
@@ -355,19 +404,32 @@ def migrate_legacy_workspace(
         _copy_tree(source, staging)
         context = {"resolutions": resolutions, "occurred_at": timestamp}
         step_results = []
-        for step in plan_migration(0, CURRENT_KNOWLEDGE_SCHEMA):
-            step_results.append(step.apply(staging, context))
+        source_versions = workspace_versions(source)
+        if source_versions == {"workspace_schema": 1, "knowledge_schema": 1}:
+            shutil.copy2(source / "dream.toml", staging / "dream.toml")
+        if source_versions["knowledge_schema"] == 0:
+            for step in plan_migration(0, CURRENT_KNOWLEDGE_SCHEMA):
+                step_results.append(step.apply(staging, context))
+        step_results.append(migrate_v1_to_v2(staging, context))
         verification = verify_workspace(staging)
         if verification["status"] != "ok":
             raise MigrationError(f"workspace verification failed: {verification['errors']}")
-        _assert_invariants(inspection["counts"], verification["counts"])
+        _assert_invariants(
+            inspection["counts"],
+            verification["counts"],
+            timeline_additions=(
+                inspection["counts"]["knowledge_items"]
+                if source_versions["knowledge_schema"] == 0
+                else 0
+            ),
+        )
         if _source_manifest(source) != source_manifest:
             raise MigrationError("legacy source changed during migration; retry from a stable source")
 
         private_record = {
-            "migration_id": "knowledge-v0-to-v1",
-            "from_version": 0,
-            "to_version": 1,
+            "migration_id": "+".join(inspection["migration_path"]),
+            "from_version": inspection["from_schema"],
+            "to_version": CURRENT_WORKSPACE_SCHEMA,
             "occurred_at": timestamp,
             "source_path": str(source),
             "target_path": str(target),
@@ -377,11 +439,12 @@ def migrate_legacy_workspace(
         private_path = staging / "state/migration-ledger.jsonl"
         with private_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(private_record, ensure_ascii=False, sort_keys=True) + "\n")
-        resolution_path = staging / "state/migration-resolutions-v0-v1.json"
-        resolution_path.write_text(
-            json.dumps(resolutions, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        if resolutions:
+            resolution_path = staging / "state/migration-resolutions-v0-v1.json"
+            resolution_path.write_text(
+                json.dumps(resolutions, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         os.replace(staging, target)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

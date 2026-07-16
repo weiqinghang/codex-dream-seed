@@ -133,6 +133,19 @@ def _parser() -> argparse.ArgumentParser:
     mark.add_argument(
         "--observation", action="append", default=None, help="Observation ID (repeatable)"
     )
+
+    run_start = subcommands.add_parser("run-start", help="Start a tracked Dream cycle")
+    run_start.add_argument("--title", required=True)
+    run_start.add_argument("--scope", default="{}", help="JSON object describing time/project scope")
+
+    run_link = subcommands.add_parser("run-link", help="Link reviewed TASK references to a Dream cycle")
+    run_link.add_argument("run_id")
+    run_link.add_argument("task_ref", nargs="+")
+
+    run_complete = subcommands.add_parser("run-complete", help="Complete a tracked Dream cycle")
+    run_complete.add_argument("run_id")
+    run_complete.add_argument("--report", default=None, help="Workspace-relative sanitized report path")
+    run_complete.add_argument("--summary", default="{}", help="JSON object with aggregate run results")
     return parser
 
 
@@ -239,7 +252,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     config = load_config(workspace)
     codex_home = args.codex_home.expanduser() if args.codex_home else codex_home_from(config)
-    ledger_path = args.ledger or workspace / "state/session-ledger.jsonl"
+    from .database import database_path
+    from .schema import workspace_versions
+
+    ledger_path = args.ledger or (
+        database_path(workspace)
+        if workspace_versions(workspace)["workspace_schema"] >= 2
+        else workspace / "state/session-ledger.jsonl"
+    )
 
     if args.command == "doctor":
         result = doctor_workspace(workspace, codex_home)
@@ -266,6 +286,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_current_workspace(workspace)
     except ValueError as error:
         raise SystemExit(str(error)) from error
+
+    if args.command in {"run-start", "run-link", "run-complete"}:
+        from .database import complete_run, create_run, link_run_tasks
+
+        try:
+            if args.command == "run-start":
+                scope = json.loads(args.scope)
+                if not isinstance(scope, dict):
+                    raise ValueError("--scope must be a JSON object")
+                _print_json(create_run(ledger_path, args.title, scope))
+            elif args.command == "run-link":
+                _print_json(
+                    {
+                        "run_id": args.run_id,
+                        "linked": link_run_tasks(ledger_path, args.run_id, args.task_ref),
+                    }
+                )
+            else:
+                summary = json.loads(args.summary)
+                if not isinstance(summary, dict):
+                    raise ValueError("--summary must be a JSON object")
+                if args.report:
+                    report = (workspace / args.report).resolve()
+                    reports_root = (workspace / "reports").resolve()
+                    if reports_root not in report.parents or not report.is_file():
+                        raise ValueError("--report must name an existing file below reports/")
+                _print_json(complete_run(ledger_path, args.run_id, args.report, summary))
+        except (ValueError, json.JSONDecodeError) as error:
+            raise SystemExit(str(error)) from error
+        return 0
 
     if args.command == "sync":
         records = _synced(codex_home, ledger_path, args.since_days)
