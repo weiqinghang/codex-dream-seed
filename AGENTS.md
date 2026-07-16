@@ -22,15 +22,15 @@ of real user sessions and previously generated dream results.
 ## Release and installation channels
 
 - `product` is the stable distribution branch and the GitHub default branch.
-- `developer` is the active integration branch. It may contain incomplete, experimental,
+- `develop` is the active integration branch. It may contain incomplete, experimental,
   or not-yet-promoted behavior and is never the implicit installation source.
 - Stable releases are immutable annotated tags. The current stable release is `v0.3.0`
-  at commit `0d48bba`; the `0.4.0` line on `developer` remains development-only until it
+  at commit `0d48bba`; the `0.4.0` line on `develop` remains development-only until it
   passes an explicit promotion decision.
 - When a user asks to clone, install, initialize, upgrade, or start Dream without naming
-  a channel, use the latest stable tag or `product`. Never select `developer` merely
+  a channel, use the latest stable tag or `product`. Never select `develop` merely
   because it has the newest commit or the highest package version.
-- Use `developer` only when the user explicitly requests development, preview, or
+- Use `develop` only when the user explicitly requests development, preview, or
   pre-release behavior. Do not recreate a `main` branch as an installation fallback.
 - Before promoting a new stable version, verify the complete supported OS/Python matrix,
   update the documented version, advance `product`, and create a matching immutable tag.
