@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -119,8 +120,19 @@ def connect(path: Path) -> sqlite3.Connection:
     return connection
 
 
+@contextmanager
+def open_database(path: Path):
+    """Commit or roll back a unit of work, then always release the file handle."""
+    connection = connect(path)
+    try:
+        with connection:
+            yield connection
+    finally:
+        connection.close()
+
+
 def initialize(path: Path) -> None:
-    with connect(path) as connection:
+    with open_database(path) as connection:
         connection.executescript(SCHEMA_SQL)
         connection.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('database_schema', ?)",
@@ -130,7 +142,7 @@ def initialize(path: Path) -> None:
 
 def load_sessions(path: Path) -> dict[str, dict[str, Any]]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         rows = connection.execute(
             "SELECT session_id, payload_json FROM sessions ORDER BY session_id"
         ).fetchall()
@@ -158,7 +170,7 @@ def write_sessions(path: Path, records: dict[str, dict[str, Any]]) -> None:
                 json.dumps(record, ensure_ascii=False, sort_keys=True),
             )
         )
-    with connect(path) as connection:
+    with open_database(path) as connection:
         connection.executemany(
             """
             INSERT INTO sessions(
@@ -183,7 +195,7 @@ def write_sessions(path: Path, records: dict[str, dict[str, Any]]) -> None:
 
 def allocate_task_refs(path: Path, review_unit_ids: Iterable[str]) -> dict[str, str]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         existing = {
             row["review_unit_id"]: row["task_ref"]
             for row in connection.execute(
@@ -208,7 +220,7 @@ def allocate_task_refs(path: Path, review_unit_ids: Iterable[str]) -> dict[str, 
 
 def import_task_refs(path: Path, records: Iterable[dict[str, Any]]) -> None:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         connection.executemany(
             "INSERT OR IGNORE INTO task_refs(review_unit_id, task_ref) VALUES(?, ?)",
             [
@@ -220,7 +232,7 @@ def import_task_refs(path: Path, records: Iterable[dict[str, Any]]) -> None:
 
 def write_review_cards(path: Path, cards: list[dict[str, Any]]) -> None:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         connection.execute("DELETE FROM review_cards")
         connection.executemany(
             """
@@ -249,7 +261,7 @@ def write_review_cards(path: Path, cards: list[dict[str, Any]]) -> None:
 
 def load_review_cards(path: Path) -> list[dict[str, Any]]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         rows = connection.execute(
             "SELECT payload_json FROM review_cards ORDER BY last_updated_at DESC"
         ).fetchall()
@@ -259,7 +271,7 @@ def load_review_cards(path: Path) -> list[dict[str, Any]]:
 def import_historical_runs(path: Path, reports_root: Path) -> int:
     initialize(path)
     reports = sorted(Path(reports_root).glob("weekly/*.md"))
-    with connect(path) as connection:
+    with open_database(path) as connection:
         existing = int(
             connection.execute("SELECT COUNT(*) FROM dream_runs").fetchone()[0]
         )
@@ -292,7 +304,7 @@ def import_historical_runs(path: Path, reports_root: Path) -> int:
 
 def list_runs(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         rows = connection.execute(
             """
             SELECT r.run_id, r.status, r.started_at, r.completed_at, r.title,
@@ -324,7 +336,7 @@ def create_run(
     if not title:
         raise ValueError("dream run title is required")
     started_at = _now()
-    with connect(path) as connection:
+    with open_database(path) as connection:
         values = [
             int(str(row[0]).split("-", 1)[1])
             for row in connection.execute("SELECT run_id FROM dream_runs")
@@ -344,7 +356,7 @@ def create_run(
 
 def link_run_tasks(path: Path, run_id: str, task_refs: Iterable[str]) -> int:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         run = connection.execute(
             "SELECT status FROM dream_runs WHERE run_id=?", (run_id,)
         ).fetchone()
@@ -378,7 +390,7 @@ def complete_run(
 ) -> dict[str, Any]:
     initialize(path)
     completed_at = _now()
-    with connect(path) as connection:
+    with open_database(path) as connection:
         row = connection.execute(
             "SELECT status FROM dream_runs WHERE run_id=?", (run_id,)
         ).fetchone()
@@ -415,7 +427,7 @@ def begin_user_action(
     payload: dict[str, Any],
 ) -> str:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO user_actions(
@@ -440,7 +452,7 @@ def finish_user_action(
 ) -> None:
     initialize(path)
     numeric_id = int(action_id.split("-", 1)[1])
-    with connect(path) as connection:
+    with open_database(path) as connection:
         connection.execute(
             """
             UPDATE user_actions SET status=?, error=?, completed_at=?
@@ -452,7 +464,7 @@ def finish_user_action(
 
 def list_user_actions(path: Path, limit: int = 50) -> list[dict[str, Any]]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         rows = connection.execute(
             "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
         ).fetchall()
@@ -468,7 +480,7 @@ def list_user_actions(path: Path, limit: int = 50) -> list[dict[str, Any]]:
 
 def runtime_counts(path: Path) -> dict[str, int]:
     initialize(path)
-    with connect(path) as connection:
+    with open_database(path) as connection:
         return {
             "ledger_sessions": int(connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]),
             "reviewed_sessions": int(
@@ -489,7 +501,7 @@ def verify_database(path: Path) -> dict[str, Any]:
         return {"status": "failed", "errors": [f"missing database: {path}"]}
     errors: list[str] = []
     try:
-        with connect(path) as connection:
+        with open_database(path) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
                 errors.append(f"integrity_check: {result}")

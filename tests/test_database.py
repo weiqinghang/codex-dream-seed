@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ from codex_dream.database import (
     initialize,
     load_review_cards,
     load_sessions,
+    open_database,
     runtime_counts,
     link_run_tasks,
     list_runs,
@@ -83,6 +85,30 @@ class DatabaseTests(unittest.TestCase):
         records = load_sessions(self.path)
         self.assertEqual(set(records), {"one", "two"})
         self.assertEqual(records["one"]["source_status"], "archived")
+
+    def test_managed_connection_commits_rolls_back_and_releases_file_handle(self):
+        with open_database(self.path) as connection:
+            connection.execute(
+                "INSERT INTO meta(key, value) VALUES('committed-test', 'yes')"
+            )
+        with self.assertRaises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+
+        with self.assertRaisesRegex(RuntimeError, "rollback"):
+            with open_database(self.path) as rollback_connection:
+                rollback_connection.execute(
+                    "INSERT INTO meta(key, value) VALUES('rolled-back-test', 'no')"
+                )
+                raise RuntimeError("rollback")
+        with open_database(self.path) as verification_connection:
+            committed = verification_connection.execute(
+                "SELECT value FROM meta WHERE key='committed-test'"
+            ).fetchone()
+            rolled_back = verification_connection.execute(
+                "SELECT value FROM meta WHERE key='rolled-back-test'"
+            ).fetchone()
+        self.assertEqual(committed[0], "yes")
+        self.assertIsNone(rolled_back)
 
 
 if __name__ == "__main__":

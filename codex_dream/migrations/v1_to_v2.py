@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sqlite3
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +12,7 @@ from ..database import (
     import_historical_runs,
     import_task_refs,
     initialize,
+    open_database,
     write_review_cards,
     write_sessions,
 )
@@ -77,7 +77,7 @@ def migrate_v1_to_v2(workspace: Path, context: dict[str, Any]) -> dict[str, Any]
         moved.append(name)
 
     occurred_at = context.get("occurred_at") or _now()
-    with sqlite3.connect(str(database)) as connection:
+    with open_database(database) as connection:
         connection.execute(
             "INSERT OR REPLACE INTO migration_log(migration_id, applied_at, details_json) VALUES(?, ?, ?)",
             (
