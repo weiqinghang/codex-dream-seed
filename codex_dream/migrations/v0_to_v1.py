@@ -17,7 +17,10 @@ def _now() -> str:
 
 
 def _write_json(path: Path, value: dict[str, Any]) -> None:
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _task_refs(values: list[Any]) -> list[str]:
@@ -134,7 +137,7 @@ def _append_migration_event(
             "migration_id": MIGRATION_ID,
         },
     }
-    with timeline_path.open("a") as handle:
+    with timeline_path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
 
 
@@ -145,7 +148,7 @@ def _remap_observation_timeline(
         return
     events = []
     changed = False
-    for line in timeline_path.read_text().splitlines():
+    for line in timeline_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         event = json.loads(line)
@@ -157,7 +160,11 @@ def _remap_observation_timeline(
         events.append(event)
     if changed:
         timeline_path.write_text(
-            "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events)
+            "".join(
+                json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+                for event in events
+            ),
+            encoding="utf-8",
         )
 
 
@@ -167,7 +174,7 @@ def migrate_v0_to_v1(workspace: Path, context: dict[str, Any]) -> dict[str, Any]
     observation_acknowledgements = resolutions.get("observation_acknowledgements", {})
     timestamp = context.get("occurred_at") or _now()
     index_path = workspace / "knowledge/index.json"
-    index = json.loads(index_path.read_text())
+    index = json.loads(index_path.read_text(encoding="utf-8"))
     next_event = int(index.get("next_ids", {}).get("EVT", 1))
     next_observation = int(index.get("next_ids", {}).get("OBS", 1))
     migrated_items = 0
@@ -178,7 +185,7 @@ def migrate_v0_to_v1(workspace: Path, context: dict[str, Any]) -> dict[str, Any]
     id_remaps = []
 
     for item_path in sorted((workspace / "knowledge/items").glob("KD-*/item.json")):
-        item = json.loads(item_path.read_text())
+        item = json.loads(item_path.read_text(encoding="utf-8"))
         gaps = candidate_resolution_gaps(item, resolutions)
         if gaps:
             raise MigrationError(
@@ -235,7 +242,9 @@ def migrate_v0_to_v1(workspace: Path, context: dict[str, Any]) -> dict[str, Any]
             migrated_validations += 1
 
         _write_json(item_path, item)
-        (item_path.parent / "summary.md").write_text(render_lifecycle(item).rstrip() + "\n")
+        (item_path.parent / "summary.md").write_text(
+            render_lifecycle(item).rstrip() + "\n", encoding="utf-8"
+        )
         event_id = f"EVT-{next_event:04d}"
         next_event += 1
         _append_migration_event(
@@ -265,7 +274,7 @@ def migrate_v0_to_v1(workspace: Path, context: dict[str, Any]) -> dict[str, Any]
         "id_remaps": id_remaps,
     }
     history_path = workspace / "knowledge/migration-history.jsonl"
-    with history_path.open("a") as handle:
+    with history_path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(history, ensure_ascii=False, sort_keys=True) + "\n")
     return history
 

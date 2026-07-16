@@ -240,7 +240,7 @@ def load_ledger(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
     records: dict[str, dict[str, Any]] = {}
-    with path.open() as handle:
+    with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
@@ -259,7 +259,7 @@ def write_ledger(path: Path, records: dict[str, dict[str, Any]]) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             for session_id in sorted(records):
                 record = dict(records[session_id])
                 record.pop("source_mtime_ns", None)

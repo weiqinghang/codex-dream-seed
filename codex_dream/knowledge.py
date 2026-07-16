@@ -72,7 +72,7 @@ def _atomic_text(path: Path, content: str) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -89,7 +89,7 @@ def _read_index(root: Path) -> dict[str, Any]:
     path = root / "index.json"
     if not path.exists():
         return _default_index()
-    index = json.loads(path.read_text())
+    index = json.loads(path.read_text(encoding="utf-8"))
     defaults = _default_index()
     index.setdefault("items", [])
     index.setdefault("next_ids", {})
@@ -131,7 +131,7 @@ def _write_item(root: Path, item: dict[str, Any]) -> None:
 
 def _append_timeline(root: Path, knowledge_id: str, event: dict[str, Any]) -> None:
     path = _timeline_path(root, knowledge_id)
-    existing = path.read_text() if path.exists() else ""
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
     serialized = json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
     _atomic_text(path, existing + serialized)
 
@@ -186,7 +186,7 @@ def load_item(root: Path, knowledge_id: str) -> dict[str, Any]:
     path = _item_path(Path(root), knowledge_id)
     if not path.exists():
         raise KeyError(f"unknown knowledge ID: {knowledge_id}")
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _find(records: list[dict[str, Any]], key: str, value: str) -> dict[str, Any]:
@@ -360,7 +360,7 @@ def active_validations(root: Path) -> list[dict[str, Any]]:
     root = Path(root)
     active = []
     for path in sorted((root / "items").glob("KD-*/item.json")):
-        item = json.loads(path.read_text())
+        item = json.loads(path.read_text(encoding="utf-8"))
         for validation in item.get("validations", []):
             if validation.get("status") in {"pending", "validating"}:
                 entry = dict(validation)
@@ -480,7 +480,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.data_file == "-":
             data = json.load(sys.stdin)
         else:
-            data = json.loads(Path(args.data_file).read_text())
+            data = json.loads(Path(args.data_file).read_text(encoding="utf-8"))
         event = record_event(root, args.knowledge_id, args.type, data)
         print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

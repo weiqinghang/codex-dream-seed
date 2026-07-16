@@ -27,7 +27,7 @@ def _read_index(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     names = {}
-    with path.open() as handle:
+    with path.open(encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue
@@ -46,7 +46,7 @@ def _extract_rollout(path: Path, start_line: int = 1) -> dict[str, Any]:
     tools: Counter[str] = Counter()
     failure_signals: list[str] = []
 
-    with path.open(errors="replace") as handle:
+    with path.open(encoding="utf-8", errors="replace") as handle:
         for line_number, line in enumerate(handle, start=1):
             if line_number < start_line:
                 continue
@@ -109,7 +109,7 @@ def _atomic_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     try:
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             for record in records:
                 handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
             handle.flush()
@@ -129,7 +129,7 @@ def _task_references(
     existing: dict[str, str] = {}
     highest = 0
     if path.exists():
-        with path.open() as handle:
+        with path.open(encoding="utf-8") as handle:
             for line in handle:
                 if not line.strip():
                     continue
@@ -312,7 +312,7 @@ def checkpoint_review_cards(
     observation_links: dict[str, list[str]] = {}
     if knowledge_root is not None:
         for item_path in sorted(Path(knowledge_root).glob("items/KD-*/item.json")):
-            item = json.loads(item_path.read_text())
+            item = json.loads(item_path.read_text(encoding="utf-8"))
             for observation in item.get("observations", []):
                 observation_id = observation.get("observation_id")
                 if not observation_id:
@@ -322,7 +322,7 @@ def checkpoint_review_cards(
                         observation_links.setdefault(evidence, []).append(observation_id)
     selected_trees = 0
     selected_rollouts = 0
-    with Path(cards_path).open() as handle:
+    with Path(cards_path).open(encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
                 continue

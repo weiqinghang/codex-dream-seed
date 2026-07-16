@@ -30,7 +30,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     records = []
-    with path.open() as handle:
+    with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
@@ -103,7 +103,7 @@ def _counts(root: Path) -> dict[str, int]:
     items = []
     timeline_events = []
     for item_path in sorted((root / "knowledge/items").glob("KD-*/item.json")):
-        items.append(json.loads(item_path.read_text()))
+        items.append(json.loads(item_path.read_text(encoding="utf-8")))
         timeline_events.extend(_load_jsonl(item_path.parent / "timeline.jsonl"))
     ledger = _load_jsonl(root / "state/session-ledger.jsonl")
     task_map = _load_jsonl(root / "state/task-ref-map.jsonl")
@@ -148,7 +148,7 @@ def inspect_legacy_workspace(
     unacknowledged_observations = []
     warnings = []
     for item_path in sorted((source / "knowledge/items").glob("KD-*/item.json")):
-        item = json.loads(item_path.read_text())
+        item = json.loads(item_path.read_text(encoding="utf-8"))
         unresolved.extend(candidate_resolution_gaps(item, resolutions))
         item_observation_gaps = observation_resolution_gaps(item, resolutions)
         unacknowledged_observations.extend(item_observation_gaps)
@@ -195,7 +195,7 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
         errors.append("missing knowledge/index.json")
         index = {"items": [], "next_ids": {}}
     else:
-        index = json.loads(index_path.read_text())
+        index = json.loads(index_path.read_text(encoding="utf-8"))
     if index.get("schema_version") != CURRENT_KNOWLEDGE_SCHEMA:
         errors.append("knowledge index schema_version is not current")
 
@@ -204,7 +204,7 @@ def verify_workspace(workspace: Path) -> dict[str, Any]:
     }
     items = []
     for item_path in sorted((workspace / "knowledge/items").glob("KD-*/item.json")):
-        item = json.loads(item_path.read_text())
+        item = json.loads(item_path.read_text(encoding="utf-8"))
         items.append(item)
         ids["KD"].append(item.get("knowledge_id"))
         if item.get("schema_version") != CURRENT_KNOWLEDGE_SCHEMA:
@@ -375,11 +375,12 @@ def migrate_legacy_workspace(
             "verification": verification,
         }
         private_path = staging / "state/migration-ledger.jsonl"
-        with private_path.open("a") as handle:
+        with private_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(private_record, ensure_ascii=False, sort_keys=True) + "\n")
         resolution_path = staging / "state/migration-resolutions-v0-v1.json"
         resolution_path.write_text(
-            json.dumps(resolutions, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+            json.dumps(resolutions, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
         )
         os.replace(staging, target)
     except BaseException:

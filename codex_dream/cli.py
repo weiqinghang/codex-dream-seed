@@ -217,7 +217,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "migrate":
         resolutions = {}
         if args.resolutions:
-            resolutions = json.loads(args.resolutions.expanduser().read_text())
+            resolutions = json.loads(
+                args.resolutions.expanduser().read_text(encoding="utf-8")
+            )
         try:
             result = migrate_legacy_workspace(
                 args.source,

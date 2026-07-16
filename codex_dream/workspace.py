@@ -112,7 +112,7 @@ def configured_default_workspace(pointer_path: Path | None = None) -> Path | Non
     pointer = pointer_path or default_workspace_pointer()
     if not pointer.is_file():
         return None
-    value = pointer.read_text().strip()
+    value = pointer.read_text(encoding="utf-8").strip()
     return Path(value).expanduser() if value else None
 
 
@@ -158,7 +158,7 @@ def set_default_workspace(
     )
     try:
         _restrict_private_descriptor(descriptor)
-        with os.fdopen(descriptor, "w") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(str(workspace) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -178,7 +178,7 @@ def load_config(workspace: Path) -> dict[str, Any]:
     if not path.exists():
         return config
     parser = configparser.ConfigParser()
-    parser.read(path)
+    parser.read(path, encoding="utf-8")
     source = parser["source"] if parser.has_section("source") else {}
     review = parser["review"] if parser.has_section("review") else {}
     format_section = parser["format"] if parser.has_section("format") else {}
@@ -253,7 +253,7 @@ def init_workspace(path: Path) -> dict[str, Any]:
         if target.exists():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+        target.write_text(content, encoding="utf-8")
         created.append(relative)
 
     return {"workspace": str(path), "created": created, "already_initialized": not created}
@@ -266,7 +266,9 @@ def doctor_workspace(path: Path, codex_home: Path) -> dict[str, Any]:
         "workspace_exists": path.is_dir(),
         "config_exists": (path / "dream.toml").is_file(),
         "private_state_ignored": "state/" in (
-            (path / ".gitignore").read_text() if (path / ".gitignore").exists() else ""
+            (path / ".gitignore").read_text(encoding="utf-8")
+            if (path / ".gitignore").exists()
+            else ""
         ),
         "codex_home_exists": codex_home.is_dir(),
         "session_source_exists": any(

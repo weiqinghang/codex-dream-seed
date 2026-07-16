@@ -35,7 +35,7 @@ def audit_shareable_outputs(workspace: Path) -> dict[str, Any]:
             if path.suffix not in TEXT_SUFFIXES:
                 continue
             try:
-                lines = path.read_text(errors="replace").splitlines()
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 findings.append(
                     {"path": str(path.relative_to(workspace)), "line": None, "kind": "unreadable"}
