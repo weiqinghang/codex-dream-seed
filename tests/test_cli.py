@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from codex_dream.cli import main
+from codex_dream.database import begin_user_action, get_user_action, transition_user_action
 from codex_dream.workspace import init_workspace
 from tests.test_ledger import append_event, write_rollout
 
@@ -204,6 +205,53 @@ class CliTests(unittest.TestCase):
             '{"days":7,"user_anchor":{"status":"none"}}',
         )
         self.assertEqual(started["status"], "active")
+
+    def test_codex_can_claim_and_complete_a_console_handoff(self):
+        action_id = begin_user_action(
+            self.ledger,
+            "enter_trial",
+            "KD-0001",
+            "CAN-0001",
+            "Synthetic decision.",
+            {
+                "candidate_title": "Synthetic candidate",
+                "trial_plan": {"scope": "project", "success_criteria": ["works"]},
+            },
+        )
+        transition_user_action(self.ledger, action_id, "handoff_pending")
+
+        _, listed = self.run_cli("handoff-list")
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["handoffs"][0]["action_id"], action_id)
+
+        _, claimed = self.run_cli("handoff-claim", action_id)
+        self.assertEqual(claimed["status"], "claimed")
+        _, completed = self.run_cli(
+            "handoff-complete",
+            action_id,
+            "--result",
+            '{"outcome":"trial_started","validation_id":"VAL-0001"}',
+        )
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(
+            get_user_action(self.ledger, action_id)["payload"]["codex_result"]["validation_id"],
+            "VAL-0001",
+        )
+
+    def test_handoff_result_is_refused_before_claim(self):
+        action_id = begin_user_action(
+            self.ledger,
+            "enter_trial",
+            "KD-0001",
+            "CAN-0001",
+            "Synthetic decision.",
+            {},
+        )
+        transition_user_action(self.ledger, action_id, "handoff_pending")
+        with self.assertRaisesRegex(SystemExit, "claim it before"):
+            self.run_cli(
+                "handoff-complete", action_id, "--result", '{"outcome":"trial_started"}'
+            )
 
 
 if __name__ == "__main__":

@@ -4,96 +4,142 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
+    <meta name="description" content="审查 Dream 结果、做出简单决定，并回到 Codex 继续执行。">
     <title>Dream Console</title>
     <link rel="stylesheet" href="/app.css">
   </head>
   <body>
-    <div class="shell">
-      <aside class="rail">
-        <a class="brand" href="#overview" aria-label="Dream Console 总览">
-          <span class="brand-mark" aria-hidden="true">◐</span>
-          <span>Dream<br>Console</span>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#home" aria-label="Dream Console 首页">
+          <span class="brand-symbol" aria-hidden="true"><i></i></span>
+          <span><b>Dream</b><small>Console</small></span>
         </a>
         <nav aria-label="主导航">
-          <button class="nav-item is-active" data-view="overview"><span>01</span>总览</button>
-          <button class="nav-item" data-view="runs"><span>02</span>梦境</button>
-          <button class="nav-item" data-view="tasks"><span>03</span>任务</button>
-          <button class="nav-item" data-view="knowledge"><span>04</span>知识</button>
-          <button class="nav-item" data-view="decisions"><span>05</span>决策</button>
+          <button class="nav-item is-active" type="button" data-view="home"><i>⌂</i><span>首页</span></button>
+          <button class="nav-item" type="button" data-view="runs"><i>◌</i><span>梦境</span></button>
+          <button class="nav-item" type="button" data-view="improvements"><i>↗</i><span>改进追踪</span><b id="nav-attention-count">0</b></button>
+          <button class="nav-item" type="button" data-view="knowledge"><i>◇</i><span>知识库</span></button>
         </nav>
-        <div class="local-note"><i></i>仅在本机运行</div>
+        <div class="sidebar-note">
+          <span class="local-dot"></span>
+          <div><b>仅在本机运行</b><small id="workspace-name">正在连接…</small></div>
+        </div>
       </aside>
 
       <main>
-        <header class="topline">
+        <header class="topbar">
           <div>
-            <p class="eyebrow" id="eyebrow">PERSONAL LEARNING LEDGER</p>
-            <h1 id="page-title">今天的梦境脉络</h1>
+            <p class="overline" id="page-overline">TODAY</p>
+            <h1 id="page-title">今天需要你关注什么</h1>
+            <p id="page-description">这里只放最关键的事项。决定以后，回到 Codex 继续真正的工作。</p>
           </div>
-          <div class="workspace-chip"><span id="workspace-name">正在连接…</span><b>V2</b></div>
+          <div class="codex-boundary" title="Console 不会自行调用模型或执行项目变更">
+            <span></span> 决策在这里，执行在 Codex
+          </div>
         </header>
 
-        <section class="view is-visible" id="view-overview" aria-labelledby="page-title">
-          <div class="hero-grid">
-            <article class="lead-stat">
-              <p>已审阅 Session</p>
-              <strong id="reviewed-count">—</strong>
-              <div class="meter"><span id="review-meter"></span></div>
-              <small id="review-caption">正在读取本地账本</small>
-            </article>
-            <div class="signal-list" id="signal-list"></div>
+        <section class="view is-visible" id="view-home">
+          <section class="handoff-banner is-hidden" id="handoff-banner">
+            <div class="handoff-icon">↗</div>
+            <div>
+              <p class="overline">NEXT IN CODEX</p>
+              <h2 id="handoff-title">计划已确认，等待 Codex 接续</h2>
+              <p id="handoff-copy">Console 已保存你的决定，但不会自行开始实验。</p>
+            </div>
+            <button type="button" class="button primary" id="copy-handoff">复制接续指令</button>
+          </section>
+
+          <div class="section-head">
+            <div><p class="overline">ATTENTION WINDOW</p><h2>此刻最值得处理</h2></div>
+            <p>最多 5 项，不代表只有 5 项</p>
           </div>
-          <div class="section-heading"><h2>最近梦境</h2><button class="text-action" data-jump="runs">查看全部 →</button></div>
-          <div class="run-strip" id="recent-runs"></div>
-          <div class="section-heading"><h2>知识成熟度</h2><span>从观察走向验证</span></div>
-          <div class="maturity-track" id="maturity-track"></div>
+          <div class="attention-list" id="attention-list"></div>
+
+          <div class="home-secondary">
+            <section>
+              <div class="section-head compact"><div><p class="overline">RECENT DREAMS</p><h2>最近梦境</h2></div><button type="button" class="text-button" data-jump="runs">查看全部</button></div>
+              <div class="recent-runs" id="recent-runs"></div>
+            </section>
+            <aside class="how-it-works">
+              <p class="overline">THE LOOP</p>
+              <h2>这个页面只负责闭环中的两步</h2>
+              <ol>
+                <li><b>审查</b><span>看懂候选为何出现、证据是否够用。</span></li>
+                <li><b>决定</b><span>确认范围、成功标准与提醒时间。</span></li>
+                <li class="muted"><b>回到 Codex</b><span>由 Codex 执行、收集证据并回写。</span></li>
+              </ol>
+            </aside>
+          </div>
         </section>
 
         <section class="view" id="view-runs">
-          <div class="section-heading intro"><div><p class="kicker">DREAM LOG</p><h2>每一次做梦，都留下可追踪的边界</h2></div></div>
           <div class="timeline" id="runs-list"></div>
         </section>
 
-        <section class="view" id="view-tasks">
-          <div class="toolbar">
-            <label class="search"><span>⌕</span><input id="task-search" placeholder="搜索任务名称或 TASK 编号"></label>
-            <select id="task-status" aria-label="筛选任务状态">
-              <option value="">全部状态</option><option value="ready">待审阅</option><option value="active">进行中</option><option value="short">短任务</option>
-            </select>
+        <section class="view" id="view-improvements">
+          <div class="tracking-summary">
+            <div><strong id="tracking-total">0</strong><span>全部改进项</span></div>
+            <p>从候选、实验到最终落实，每一项都保留完整旅程。点击一项查看细节。</p>
           </div>
-          <div class="table-wrap">
-            <table><thead><tr><th>任务</th><th>项目</th><th>状态</th><th>任务树</th><th>最后变化</th></tr></thead><tbody id="task-rows"></tbody></table>
-          </div>
+          <div class="filters" id="improvement-filters" aria-label="改进状态筛选"></div>
+          <div class="improvement-table" id="improvement-list"></div>
         </section>
 
         <section class="view" id="view-knowledge">
           <div class="knowledge-layout">
             <div class="knowledge-index" id="knowledge-index"></div>
-            <article class="knowledge-detail" id="knowledge-detail"><div class="empty-state">选择一项知识，查看它从观察到验证的完整轨迹。</div></article>
+            <article class="knowledge-detail" id="knowledge-detail">
+              <div class="empty-state">选择一项知识，查看它从观察到验证的完整轨迹。</div>
+            </article>
           </div>
-        </section>
-
-        <section class="view" id="view-decisions">
-          <div class="section-heading intro"><div><p class="kicker">HUMAN GATE</p><h2>需要你判断的候选</h2><p>系统提出证据，决定始终由你留下。</p></div></div>
-          <div class="decision-list" id="decision-list"></div>
-          <div class="section-heading"><h2>最近操作</h2><span>可追溯的人工反馈</span></div>
-          <div class="action-log" id="action-log"></div>
         </section>
       </main>
     </div>
 
-    <dialog id="decision-dialog">
-      <form method="dialog" id="decision-form">
+    <dialog id="improvement-dialog">
+      <div class="dialog-shell">
         <button type="button" class="dialog-close" data-dialog-close aria-label="关闭">×</button>
-        <p class="kicker">TRACEABLE DECISION</p>
-        <h2 id="dialog-title">记录你的判断</h2>
-        <input type="hidden" id="dialog-knowledge-id"><input type="hidden" id="dialog-candidate-id"><input type="hidden" id="dialog-action">
-        <p id="dialog-copy"></p>
-        <label>判断依据<textarea id="decision-reason" required minlength="3" placeholder="为什么这样决定？这会成为可追溯记录的一部分。"></textarea></label>
-        <div class="dialog-actions"><button type="button" class="secondary" data-dialog-close>取消</button><button type="submit" value="default" id="decision-submit">确认记录</button></div>
-        <p class="form-status" id="form-status" role="status"></p>
-      </form>
+        <div id="improvement-detail"></div>
+        <form id="decision-form" class="decision-form is-hidden">
+          <input type="hidden" id="dialog-knowledge-id">
+          <input type="hidden" id="dialog-candidate-id">
+          <input type="hidden" id="dialog-action">
+          <div id="simple-decision" class="is-hidden">
+            <label>你的判断依据<textarea id="decision-reason" minlength="3" placeholder="为什么这样决定？它会成为可追溯记录的一部分。"></textarea></label>
+          </div>
+          <div id="trial-fields" class="is-hidden">
+            <div class="form-callout"><b>先确认一个轻量实验</b><span>这里保存计划；真正的落实与语义判断仍由 Codex 完成。</span></div>
+            <label>准备尝试什么<textarea id="trial-proposal" placeholder="描述最小可行尝试"></textarea></label>
+            <div class="field-grid">
+              <label>影响范围<select id="trial-scope"><option value="project">当前项目</option><option value="environment">整个 Codex 环境</option></select></label>
+              <label>预期固化载体<select id="trial-carrier" required><option value="">请你选择</option><option value="project_instruction">项目规则 / AGENTS.md</option><option value="environment_instruction">环境级规则</option><option value="skill">Skill</option><option value="script">脚本</option><option value="template">模板</option><option value="checker">检查器</option><option value="knowledge_only">仅保留为知识</option></select></label>
+              <label>观察任务数<input id="trial-sessions" type="number" min="1" value="5"></label>
+              <label>最长观察天数<input id="trial-days" type="number" min="1" value="30"></label>
+              <label>提醒日期<input id="trial-reminder" type="date"></label>
+            </div>
+            <label>成功标准<textarea id="trial-success" placeholder="每行一条；系统可以建议，但需要你确认"></textarea></label>
+            <label class="confirm-row"><input id="criteria-confirmed" type="checkbox"><span>我确认以上成功标准可以用来判断这次实验。</span></label>
+            <label>为什么值得尝试<textarea id="trial-reason" minlength="3" placeholder="留下你的决定依据"></textarea></label>
+          </div>
+          <div class="dialog-actions">
+            <button type="button" class="button ghost" data-cancel-action>返回详情</button>
+            <button type="submit" class="button primary" id="decision-submit">确认记录</button>
+          </div>
+          <p class="form-status" id="form-status" role="status"></p>
+        </form>
+        <section class="handoff-result is-hidden" id="handoff-result">
+          <span class="success-mark">✓</span>
+          <p class="overline">PLAN SAVED</p>
+          <h2>计划已确认，等待 Codex 接续</h2>
+          <p>Console 不会自行开始实验。回到 Codex 后，它会读取你刚确认的范围与成功标准。</p>
+          <div class="instruction-box"><code id="next-instruction">继续处理我刚才在 Dream Console 中确认的事项。</code><button type="button" id="copy-result">复制</button></div>
+          <button type="button" class="button primary" data-dialog-close>完成</button>
+        </section>
+      </div>
     </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/app.js"></script>
   </body>
 </html>

@@ -150,6 +150,38 @@ def _parser() -> argparse.ArgumentParser:
     run_complete.add_argument("run_id")
     run_complete.add_argument("--report", default=None, help="Workspace-relative sanitized report path")
     run_complete.add_argument("--summary", default="{}", help="JSON object with aggregate run results")
+
+    handoff_list = subcommands.add_parser(
+        "handoff-list", help="List Console decisions waiting for Codex"
+    )
+    handoff_list.add_argument(
+        "--status",
+        action="append",
+        choices=("handoff_pending", "claimed", "completed", "failed"),
+        default=None,
+        help="Filter by handoff status; repeat to include more than one",
+    )
+
+    handoff_claim = subcommands.add_parser(
+        "handoff-claim", help="Acknowledge one Console decision before executing it"
+    )
+    handoff_claim.add_argument("action_id")
+
+    handoff_complete = subcommands.add_parser(
+        "handoff-complete", help="Record that Codex processed a claimed handoff"
+    )
+    handoff_complete.add_argument("action_id")
+    handoff_complete.add_argument(
+        "--result",
+        required=True,
+        help="JSON object describing the created adoption, validation, or blocker",
+    )
+
+    handoff_fail = subcommands.add_parser(
+        "handoff-fail", help="Record why a claimed handoff could not be processed"
+    )
+    handoff_fail.add_argument("action_id")
+    handoff_fail.add_argument("--error", required=True)
     return parser
 
 
@@ -290,6 +322,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         require_current_workspace(workspace)
     except ValueError as error:
         raise SystemExit(str(error)) from error
+
+    if args.command in {
+        "handoff-list",
+        "handoff-claim",
+        "handoff-complete",
+        "handoff-fail",
+    }:
+        from .database import (
+            claim_user_action,
+            get_user_action,
+            list_user_actions,
+            transition_user_action,
+        )
+
+        try:
+            if args.command == "handoff-list":
+                statuses = set(args.status or ["handoff_pending"])
+                actions = [
+                    action
+                    for action in list_user_actions(
+                        ledger_path, limit=100, statuses=statuses
+                    )
+                    if action["action_type"] == "enter_trial"
+                ]
+                _print_json({"count": len(actions), "handoffs": actions})
+            elif args.command == "handoff-claim":
+                action = get_user_action(ledger_path, args.action_id)
+                if action["action_type"] != "enter_trial":
+                    raise ValueError("only an enter_trial action is a Codex handoff")
+                _print_json(claim_user_action(ledger_path, args.action_id))
+            else:
+                action = get_user_action(ledger_path, args.action_id)
+                if action["action_type"] != "enter_trial":
+                    raise ValueError("only an enter_trial action is a Codex handoff")
+                if action["status"] != "claimed":
+                    raise ValueError(
+                        f"user action is {action['status']}; claim it before writing a result"
+                    )
+                if args.command == "handoff-complete":
+                    result = json.loads(args.result)
+                    if not isinstance(result, dict) or not result:
+                        raise ValueError("--result must be a non-empty JSON object")
+                    _print_json(
+                        transition_user_action(
+                            ledger_path,
+                            args.action_id,
+                            "completed",
+                            payload_update={"codex_result": result},
+                        )
+                    )
+                else:
+                    _print_json(
+                        transition_user_action(
+                            ledger_path, args.action_id, "failed", error=args.error
+                        )
+                    )
+        except (ValueError, json.JSONDecodeError) as error:
+            raise SystemExit(str(error)) from error
+        return 0
 
     if args.command in {"run-start", "run-link", "run-complete"}:
         from .database import complete_run, create_run, link_run_tasks

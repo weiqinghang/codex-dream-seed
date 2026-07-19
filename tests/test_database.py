@@ -5,6 +5,8 @@ from pathlib import Path
 
 from codex_dream.database import (
     allocate_task_refs,
+    begin_user_action,
+    claim_user_action,
     complete_run,
     create_run,
     initialize,
@@ -13,7 +15,10 @@ from codex_dream.database import (
     open_database,
     runtime_counts,
     link_run_tasks,
+    get_user_action,
+    list_user_actions,
     list_runs,
+    transition_user_action,
     verify_database,
     write_review_cards,
     write_sessions,
@@ -154,6 +159,41 @@ class DatabaseTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(committed[0], "yes")
         self.assertIsNone(rolled_back)
+
+    def test_console_handoff_must_be_claimed_before_result_is_written(self):
+        action_id = begin_user_action(
+            self.path,
+            "enter_trial",
+            "KD-0001",
+            "CAN-0001",
+            "Synthetic human decision.",
+            {"trial_plan": {"scope": "project"}},
+        )
+        pending = transition_user_action(self.path, action_id, "handoff_pending")
+        self.assertEqual(pending["status"], "handoff_pending")
+
+        claimed = claim_user_action(self.path, action_id)
+        self.assertEqual(claimed["status"], "claimed")
+        self.assertIn("claimed_at", claimed["payload"])
+        with self.assertRaisesRegex(ValueError, "only handoff_pending"):
+            claim_user_action(self.path, action_id)
+
+        completed = transition_user_action(
+            self.path,
+            action_id,
+            "completed",
+            payload_update={"codex_result": {"outcome": "trial_started"}},
+        )
+        self.assertEqual(completed["status"], "completed")
+        self.assertIsNotNone(completed["completed_at"])
+        self.assertEqual(
+            get_user_action(self.path, action_id)["payload"]["codex_result"]["outcome"],
+            "trial_started",
+        )
+        self.assertEqual(
+            [item["action_id"] for item in list_user_actions(self.path, statuses={"completed"})],
+            [action_id],
+        )
 
 
 if __name__ == "__main__":

@@ -492,24 +492,109 @@ def begin_user_action(
 def finish_user_action(
     path: Path, action_id: str, status: str, error: str | None = None
 ) -> None:
+    transition_user_action(path, action_id, status, error=error)
+
+
+def transition_user_action(
+    path: Path,
+    action_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+    payload_update: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Move a traced user action through the Console -> Codex handoff lifecycle."""
     initialize(path)
     numeric_id = int(action_id.split("-", 1)[1])
     with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT * FROM user_actions WHERE action_id=?", (numeric_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        payload = json.loads(row["payload_json"])
+        payload.update(payload_update or {})
+        completed_at = _now() if status in {"completed", "failed", "cancelled"} else None
         connection.execute(
             """
-            UPDATE user_actions SET status=?, error=?, completed_at=?
+            UPDATE user_actions
+            SET status=?, error=?, payload_json=?, completed_at=?
             WHERE action_id=?
             """,
-            (status, error, _now(), numeric_id),
+            (
+                status,
+                error,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                completed_at,
+                numeric_id,
+            ),
         )
+    return get_user_action(path, action_id)
 
 
-def list_user_actions(path: Path, limit: int = 50) -> list[dict[str, Any]]:
+def get_user_action(path: Path, action_id: str) -> dict[str, Any]:
     initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
     with open_database(path) as connection:
-        rows = connection.execute(
-            "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        row = connection.execute(
+            "SELECT * FROM user_actions WHERE action_id=?", (numeric_id,)
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown user action: {action_id}")
+    return {
+        **dict(row),
+        "action_id": f"ACT-{int(row['action_id']):06d}",
+        "payload": json.loads(row["payload_json"]),
+    }
+
+
+def claim_user_action(path: Path, action_id: str) -> dict[str, Any]:
+    """Atomically acknowledge one pending handoff on behalf of Codex."""
+    initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
+    claimed_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT payload_json, status FROM user_actions WHERE action_id=?",
+            (numeric_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        if row["status"] != "handoff_pending":
+            raise ValueError(
+                f"user action is {row['status']}; only handoff_pending can be claimed"
+            )
+        payload = json.loads(row["payload_json"])
+        payload["claimed_at"] = claimed_at
+        cursor = connection.execute(
+            """
+            UPDATE user_actions SET status='claimed', payload_json=?
+            WHERE action_id=? AND status='handoff_pending'
+            """,
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), numeric_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("handoff was claimed concurrently")
+    return get_user_action(path, action_id)
+
+
+def list_user_actions(
+    path: Path, limit: int = 50, statuses: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
+    initialize(path)
+    selected = tuple(sorted(set(statuses or ())))
+    with open_database(path) as connection:
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            rows = connection.execute(
+                f"SELECT * FROM user_actions WHERE status IN ({placeholders}) "
+                "ORDER BY action_id DESC LIMIT ?",
+                (*selected, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
+            ).fetchall()
     return [
         {
             **dict(row),

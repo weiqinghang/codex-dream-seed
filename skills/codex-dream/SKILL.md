@@ -49,6 +49,44 @@ from the seed source tree, use the resolved external workspace for every mutable
 Default a new workspace to `~/Documents/codex-dream-workspace` unless the user chooses a
 different location.
 
+## Resume decisions made in Dream Console
+
+Dream Console is a deterministic review and decision companion. It does not call a model,
+perform semantic work, edit target projects, or claim that an experiment has started. Codex
+is the only semantic control plane.
+
+When the user asks to continue an item confirmed in Dream Console, or uses the Console's
+suggested instruction, run:
+
+```bash
+codex-dream handoff-list --status handoff_pending
+codex-dream handoff-claim <ACT-*>
+```
+
+If more than one handoff is pending, show their titles, scopes, reminder dates, and success
+criteria, then ask the user which one to continue. Do not expose raw private session content.
+For one unambiguous handoff, restate the already confirmed scope and success criteria briefly,
+then claim it before changing any project or knowledge state.
+
+Do not ask the user to reconfirm fields already recorded in the handoff unless the target is
+missing, the plan is stale, the requested carrier conflicts with repository policy, or an
+external write needs authority that the Console decision did not grant. A Console decision
+authorizes only the stated trial plan; it does not broaden the target or scope.
+
+After claiming, use the ordinary knowledge lifecycle commands to create the adoption and
+validation records, and perform only the authorized work. Then write a compact, structured
+result back to the handoff:
+
+```bash
+codex-dream handoff-complete <ACT-*> --result \
+  '{"outcome":"trial_started","adoption_id":"ADP-*","validation_id":"VAL-*"}'
+```
+
+If execution cannot continue, use `codex-dream handoff-fail <ACT-*> --error <reason>` so the
+Console can surface the failure for human review. Completing a handoff means Codex processed
+the request; it does not mean the improvement is proven or fully implemented. Those claims
+remain governed by adoption and validation state.
+
 If `doctor` reports `migration_required`, stop normal Dream writes and use the CLI's
 `migrate` dry-run against a new target workspace. Execute the registered adjacent
 migration chain in order; do not combine steps ad hoc. Require explicit private
@@ -114,6 +152,8 @@ For each review unit:
 1. Record observations and candidates with stable `TASK-*` evidence references.
 2. Update an existing knowledge item when the pattern already exists; do not create a
    duplicate title for new evidence.
+   When proposing a candidate, also persist deterministic ranking inputs when available:
+   recent and cumulative trigger counts, persistence days, value impact, and detour cost.
 3. Write the sanitized report or knowledge artifact.
 4. Run `codex-dream privacy-audit`.
 5. Only after the artifact exists and passes the audit, checkpoint every rollout actually
@@ -130,5 +170,8 @@ Do not complete a cycle whose report is missing or has not passed privacy audit.
 
 Create and update only `proposed` candidates unless the user supplies a traceable decision.
 Do not modify external projects, install generated Skills, edit `AGENTS.md`, schedule jobs,
-or apply candidates during a Dream run. Present a small set of high-value candidates and
-wait for the user to accept, reject, continue observing, or request more evidence.
+or apply candidates during a Dream run. Present at most five high-value candidates and wait
+for the user to enter a confirmed trial, reject, defer, or request more evidence. The visible
+five are an attention window, not the complete candidate pool. Rank both acute recent signals
+and chronic recurring problems so an older unresolved issue can return to the attention window
+after accumulating enough burden.

@@ -337,10 +337,32 @@ codex-dream run-complete DREAM-0003 \
 codex-dream-console
 ```
 
-默认打开 `http://127.0.0.1:8765`，提供总览、梦境时间线、任务树、知识生命周期、候选
-决策和操作审计。服务拒绝绑定非回环地址；任务接口不会把原始消息、完整项目路径或
-Session UUID 返回浏览器。接受、拒绝、继续观察和要求更多证据都必须填写原因；正式
-决定仍通过知识领域校验写入 `timeline.jsonl`，并在 SQLite 留下 `ACT-*` 审计记录。
+`develop` 的 0.4.0 线目前提供 Console 功能原型，尚未完成与 `user_anchor` 的展示对齐和
+最终体验验收。默认打开 `http://127.0.0.1:8765`。Console 是 Codex 的轻量复盘伴侣，只提供首页注意力
+窗口、梦境时间线、改进追踪和知识库。它不调用模型、不做语义判断，也不修改目标项目。
+首页最多展示 5 项，但完整候选池仍保留在“改进追踪”中；排序同时考虑近期触发和长期
+累积负担。
+
+用户可暂缓、拒绝候选，或在确认作用范围、预期固化载体、观察期限和成功标准后制定试用
+计划。计划确认后只会进入 `等待 Codex 接续`，不会被伪装成已经开始实验。页面会明确提示
+用户回到 Codex，并提供接续指令：
+
+```text
+继续处理我刚才在 Dream Console 中确认的事项。
+```
+
+Codex 侧通过以下命令读取、领取和回写交接：
+
+```bash
+codex-dream handoff-list --status handoff_pending
+codex-dream handoff-claim ACT-000001
+codex-dream handoff-complete ACT-000001 \
+  --result '{"outcome":"trial_started","adoption_id":"ADP-0001","validation_id":"VAL-0001"}'
+```
+
+服务拒绝绑定非回环地址；接口不会把原始消息、完整项目路径或 Session UUID 返回浏览器。
+所有人工操作都必须填写原因，正式决定通过知识领域校验写入 `timeline.jsonl`，并在 SQLite
+留下 `ACT-*` 审计记录。
 
 Windows PowerShell 同样运行 `codex-dream-console`；若用户脚本目录尚未进入 `PATH`，可用
 `py -m codex_dream.console`。
@@ -388,7 +410,11 @@ knowledge: observed → emerging → established → retired
 candidate: proposed → accepted | rejected | superseded
 adoption:  planned → applied | rolled_back
 validation: pending → validating → proven | failed | inconclusive
+console handoff: handoff_pending → claimed → completed | failed
 ```
+
+Console handoff 是独立的操作状态：`completed` 只表示 Codex 已经处理这次交接，不表示改进
+已经验证成功。只有用户确认的载体已经应用，并且验证状态为 `proven`，页面才显示“已完成”。
 
 - 首次出现的行为只是 `observed`；
 - 至少两个独立案例后才考虑 `emerging`；
