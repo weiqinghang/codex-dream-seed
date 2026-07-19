@@ -67,6 +67,7 @@ class DatabaseTests(unittest.TestCase):
             "days": 7,
             "user_anchor": {
                 "status": "provided",
+                "captured_from": "user_response",
                 "project": "synthetic-project",
                 "stage": "verification",
                 "polarity": "mixed",
@@ -82,7 +83,15 @@ class DatabaseTests(unittest.TestCase):
             self.path,
             run["run_id"],
             "reports/weekly/synthetic.md",
-            {"reviewed": 1},
+            {
+                "reviewed": 1,
+                "user_anchor_result": {
+                    "status": "aligned",
+                    "supporting_task_refs": [refs["synthetic-tree"]],
+                    "counterevidence_task_refs": [],
+                    "evidence_gap": "",
+                },
+            },
         )
         self.assertEqual(completed["status"], "completed")
         stored = list_runs(self.path)[0]
@@ -101,6 +110,7 @@ class DatabaseTests(unittest.TestCase):
                 "days": 7,
                 "user_anchor": {
                     "status": "none",
+                    "captured_from": "user_response",
                     "reason": "User asked to use the default review scope.",
                 },
             },
@@ -115,6 +125,7 @@ class DatabaseTests(unittest.TestCase):
                 {
                     "user_anchor": {
                         "status": "provided",
+                        "captured_from": "user_response",
                         "project": "synthetic-project",
                         "stage": "implementation",
                         "polarity": "negative",
@@ -122,6 +133,105 @@ class DatabaseTests(unittest.TestCase):
                     }
                 },
             )
+
+    def test_user_anchor_requires_a_traced_user_response_source(self):
+        with self.assertRaisesRegex(ValueError, "captured_from"):
+            create_run(
+                self.path,
+                "Untraced default",
+                {
+                    "user_anchor": {
+                        "status": "none",
+                        "reason": "The agent selected the default.",
+                    }
+                },
+            )
+
+    def test_run_completion_requires_a_structured_anchor_result(self):
+        run = create_run(
+            self.path,
+            "No special focus",
+            {
+                "user_anchor": {
+                    "status": "none",
+                    "captured_from": "user_response",
+                    "reason": "User selected the default review.",
+                }
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "requires user_anchor_result"):
+            complete_run(self.path, run["run_id"], summary={})
+
+        completed = complete_run(
+            self.path,
+            run["run_id"],
+            summary={
+                "user_anchor_result": {
+                    "status": "not_applicable",
+                    "reason": "User selected the default review.",
+                }
+            },
+        )
+        self.assertEqual(completed["status"], "completed")
+
+    def test_legacy_active_run_without_an_anchor_fails_with_recovery_guidance(self):
+        with open_database(self.path) as connection:
+            connection.execute(
+                """
+                INSERT INTO dream_runs(run_id, status, started_at, title, scope_json)
+                VALUES ('DREAM-0001', 'active', '2026-01-01T00:00:00Z', 'Legacy run', '{}')
+                """
+            )
+        with self.assertRaisesRegex(ValueError, "start a new Dream run"):
+            complete_run(
+                self.path,
+                "DREAM-0001",
+                summary={"user_anchor_result": {"status": "not_applicable"}},
+            )
+
+    def test_run_completion_rejects_unlinked_anchor_evidence(self):
+        run = create_run(
+            self.path,
+            "Focused review",
+            {
+                "user_anchor": {
+                    "status": "provided",
+                    "captured_from": "user_response",
+                    "project": "synthetic-project",
+                    "stage": "verification",
+                    "polarity": "negative",
+                    "felt_result": "The verification felt unreliable.",
+                    "expected_result": "A reliable verification loop.",
+                }
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "not linked"):
+            complete_run(
+                self.path,
+                run["run_id"],
+                summary={
+                    "user_anchor_result": {
+                        "status": "aligned",
+                        "supporting_task_refs": ["TASK-9999"],
+                        "counterevidence_task_refs": [],
+                        "evidence_gap": "",
+                    }
+                },
+            )
+
+        completed = complete_run(
+            self.path,
+            run["run_id"],
+            summary={
+                "user_anchor_result": {
+                    "status": "insufficient_evidence",
+                    "supporting_task_refs": [],
+                    "counterevidence_task_refs": [],
+                    "evidence_gap": "No reviewed task directly covered this stage.",
+                }
+            },
+        )
+        self.assertEqual(completed["status"], "completed")
 
     def test_upsert_preserves_unmentioned_sessions_for_incremental_sync(self):
         write_sessions(

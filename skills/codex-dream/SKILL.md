@@ -23,15 +23,18 @@ the user to restart Codex so the installed Skill becomes discoverable in new ses
    initialize the current project merely because the command was invoked there.
 4. Treat the current directory as instruction context, not storage selection. It does not
    restrict review to the current project unless the user explicitly requests that scope.
-5. Before reading sessions or calling `run-start`, ask exactly one lightweight focus question:
+5. Before reading sessions or calling `run-start`, obtain one lightweight focus response. If
+   the initiating message already states the project, stage, felt result, and expected result,
+   treat it as the response and do not ask the same question again. Otherwise ask in the user's
+   current language. For a Chinese conversation, ask:
 
-   > Before we begin, in your recent work was there a project and stage that felt notably
-   > good and worth preserving, or notably poor and inconsistent with your expectations?
-   > Tell me the project, stage, what you experienced, and what you expected. If nothing
-   > stands out, say "no special focus; use the default Dream scope."
+   > 开始前，最近的实践中，有没有哪个项目、哪个环节让你明显觉得做得很好，值得保留；
+   > 或者做得不好，不符合你的预期？请告诉我项目、环节、你的实际感受和原本预期。
+   > 如果没有特别关注，可以说“没有，按默认范围做梦”。
 
-   Ask this even when the user's initial instruction is only "开始做梦". Do not replace the
-   question with the agent's own ranking of what seems important.
+   Translate the same meaning for other languages without adding more questions. Ask this when
+   the user's initial instruction is only "开始做梦". Do not replace the question with the
+   agent's own ranking of what seems important.
 6. Convert the response into a compact `user_anchor`, restate it with the time range, project
    scope, and exclusions, and allow the user to correct it. Ask at most one follow-up when a
    material field cannot be represented without guessing. A user who states no special focus
@@ -103,6 +106,7 @@ include one of these forms:
 {
   "user_anchor": {
     "status": "provided",
+    "captured_from": "user_response",
     "project": "project or cross-project",
     "stage": "the relevant stage",
     "polarity": "positive | negative | mixed",
@@ -113,7 +117,13 @@ include one of these forms:
 ```
 
 ```json
-{"user_anchor": {"status": "none"}}
+{
+  "user_anchor": {
+    "status": "none",
+    "captured_from": "user_response",
+    "reason": "the user explicitly selected the default review"
+  }
+}
 ```
 
 The second form means the user explicitly chose the default review; it is not permission to
@@ -164,7 +174,12 @@ sub-agents as independent repetitions.
 
 After checkpointing, link the reviewed `TASK-*` references with `codex-dream run-link`.
 Complete the cycle with `codex-dream run-complete --report <reports/...> --summary <json>`.
-Do not complete a cycle whose report is missing or has not passed privacy audit.
+For a provided anchor, `summary.user_anchor_result` must record the relationship status,
+supporting and counterevidence `TASK-*` references, and any evidence gap. Use one of
+`aligned`, `partially_aligned`, `conflicting`, or `insufficient_evidence`. For a `none` anchor,
+record `{"status":"not_applicable","reason":"user selected the default review"}`. Do not
+complete a cycle whose report is missing, whose assessment references an unlinked task, or whose
+report has not passed privacy audit.
 
 ## Stop at the human gate
 

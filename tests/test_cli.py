@@ -202,9 +202,16 @@ class CliTests(unittest.TestCase):
             "--title",
             "Synthetic dream",
             "--scope",
-            '{"days":7,"user_anchor":{"status":"none"}}',
+            '{"days":7,"user_anchor":{"status":"none","captured_from":"user_response","reason":"User selected the default review."}}',
         )
         self.assertEqual(started["status"], "active")
+        _, completed = self.run_cli(
+            "run-complete",
+            started["run_id"],
+            "--summary",
+            '{"user_anchor_result":{"status":"not_applicable","reason":"User selected the default review."}}',
+        )
+        self.assertEqual(completed["status"], "completed")
 
     def test_codex_can_claim_and_complete_a_console_handoff(self):
         action_id = begin_user_action(

@@ -343,7 +343,12 @@ def validate_run_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     status = anchor.get("status")
     if status not in {"provided", "none"}:
         raise ValueError("user_anchor.status must be 'provided' or 'none'")
+    if anchor.get("captured_from") != "user_response":
+        raise ValueError("user_anchor.captured_from must be 'user_response'")
     if status == "none":
+        reason = anchor.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("a none user_anchor requires a non-empty reason")
         return scope
 
     required_fields = (
@@ -367,6 +372,86 @@ def validate_run_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
             "user_anchor.polarity must be 'positive', 'negative', or 'mixed'"
         )
     return scope
+
+
+def validate_run_summary(
+    scope: dict[str, Any],
+    summary: dict[str, Any] | None,
+    linked_task_refs: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Require a structured reconciliation for the human focus captured at run start."""
+    if not isinstance(summary, dict):
+        raise ValueError("dream run summary must be a JSON object")
+    result = summary.get("user_anchor_result")
+    if not isinstance(result, dict):
+        raise ValueError("dream run summary requires user_anchor_result")
+
+    anchor = scope.get("user_anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError(
+            "dream run scope has no user_anchor; start a new Dream run under the current contract"
+        )
+    if anchor["status"] == "none":
+        if result.get("status") != "not_applicable":
+            raise ValueError(
+                "a none user_anchor requires user_anchor_result.status 'not_applicable'"
+            )
+        reason = result.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("a not_applicable user_anchor_result requires a reason")
+        return summary
+
+    status = result.get("status")
+    allowed_statuses = {
+        "aligned",
+        "partially_aligned",
+        "conflicting",
+        "insufficient_evidence",
+    }
+    if status not in allowed_statuses:
+        raise ValueError(
+            "user_anchor_result.status must be aligned, partially_aligned, "
+            "conflicting, or insufficient_evidence"
+        )
+
+    evidence: dict[str, list[str]] = {}
+    for field in ("supporting_task_refs", "counterevidence_task_refs"):
+        task_refs = result.get(field)
+        if not isinstance(task_refs, list) or any(
+            not isinstance(task_ref, str) or not task_ref.strip()
+            for task_ref in task_refs
+        ):
+            raise ValueError(f"user_anchor_result.{field} must be a list of TASK references")
+        if len(task_refs) != len(set(task_refs)):
+            raise ValueError(f"user_anchor_result.{field} must not contain duplicates")
+        evidence[field] = task_refs
+
+    linked = set(linked_task_refs)
+    unknown = sorted(
+        (set(evidence["supporting_task_refs"]) | set(evidence["counterevidence_task_refs"]))
+        - linked
+    )
+    if unknown:
+        raise ValueError(
+            "user_anchor_result references tasks not linked to this Dream run: "
+            + ", ".join(unknown)
+        )
+
+    evidence_gap = result.get("evidence_gap")
+    if not isinstance(evidence_gap, str):
+        raise ValueError("user_anchor_result.evidence_gap must be a string")
+    if status == "aligned" and not evidence["supporting_task_refs"]:
+        raise ValueError("an aligned user_anchor_result requires supporting_task_refs")
+    if status in {"partially_aligned", "conflicting"} and (
+        not evidence["supporting_task_refs"]
+        or not evidence["counterevidence_task_refs"]
+    ):
+        raise ValueError(
+            f"a {status} user_anchor_result requires both supporting and counterevidence TASK refs"
+        )
+    if status == "insufficient_evidence" and not evidence_gap.strip():
+        raise ValueError("an insufficient_evidence user_anchor_result requires an evidence_gap")
+    return summary
 
 
 def create_run(
@@ -434,12 +519,22 @@ def complete_run(
     completed_at = _now()
     with open_database(path) as connection:
         row = connection.execute(
-            "SELECT status FROM dream_runs WHERE run_id=?", (run_id,)
+            "SELECT status, scope_json FROM dream_runs WHERE run_id=?", (run_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"unknown dream run: {run_id}")
         if row["status"] != "active":
             raise ValueError("only an active dream run can be completed")
+        linked_task_refs = [
+            linked["task_ref"]
+            for linked in connection.execute(
+                "SELECT task_ref FROM dream_run_tasks WHERE run_id=? AND task_ref IS NOT NULL",
+                (run_id,),
+            )
+        ]
+        summary = validate_run_summary(
+            json.loads(row["scope_json"]), summary, linked_task_refs
+        )
         connection.execute(
             """
             UPDATE dream_runs
@@ -449,7 +544,7 @@ def complete_run(
             (
                 completed_at,
                 report_path,
-                json.dumps(summary or {}, ensure_ascii=False, sort_keys=True),
+                json.dumps(summary, ensure_ascii=False, sort_keys=True),
                 run_id,
             ),
         )

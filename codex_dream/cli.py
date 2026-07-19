@@ -138,7 +138,7 @@ def _parser() -> argparse.ArgumentParser:
     run_start.add_argument("--title", required=True)
     run_start.add_argument(
         "--scope",
-        default="{}",
+        required=True,
         help="JSON object describing time/project scope and the required user_anchor",
     )
 
@@ -149,7 +149,11 @@ def _parser() -> argparse.ArgumentParser:
     run_complete = subcommands.add_parser("run-complete", help="Complete a tracked Dream cycle")
     run_complete.add_argument("run_id")
     run_complete.add_argument("--report", default=None, help="Workspace-relative sanitized report path")
-    run_complete.add_argument("--summary", default="{}", help="JSON object with aggregate run results")
+    run_complete.add_argument(
+        "--summary",
+        required=True,
+        help="JSON object including the required user_anchor_result",
+    )
 
     handoff_list = subcommands.add_parser(
         "handoff-list", help="List Console decisions waiting for Codex"
