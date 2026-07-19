@@ -192,6 +192,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["workspace"], str(self.root))
         self.assertEqual(result["workspace_source"], "default_pointer")
 
+    def test_run_start_refuses_to_skip_the_user_feedback_gate(self):
+        with self.assertRaisesRegex(SystemExit, "requires user_anchor"):
+            self.run_cli("run-start", "--title", "Synthetic dream", "--scope", '{"days":7}')
+
+        _, started = self.run_cli(
+            "run-start",
+            "--title",
+            "Synthetic dream",
+            "--scope",
+            '{"days":7,"user_anchor":{"status":"none"}}',
+        )
+        self.assertEqual(started["status"], "active")
+
 
 if __name__ == "__main__":
     unittest.main()

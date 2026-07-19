@@ -136,7 +136,11 @@ def _parser() -> argparse.ArgumentParser:
 
     run_start = subcommands.add_parser("run-start", help="Start a tracked Dream cycle")
     run_start.add_argument("--title", required=True)
-    run_start.add_argument("--scope", default="{}", help="JSON object describing time/project scope")
+    run_start.add_argument(
+        "--scope",
+        default="{}",
+        help="JSON object describing time/project scope and the required user_anchor",
+    )
 
     run_link = subcommands.add_parser("run-link", help="Link reviewed TASK references to a Dream cycle")
     run_link.add_argument("run_id")

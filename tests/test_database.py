@@ -58,7 +58,18 @@ class DatabaseTests(unittest.TestCase):
 
     def test_tracks_a_dream_run_and_its_selected_tasks_transactionally(self):
         refs = allocate_task_refs(self.path, ["synthetic-tree"])
-        run = create_run(self.path, "Synthetic dream", {"days": 7})
+        scope = {
+            "days": 7,
+            "user_anchor": {
+                "status": "provided",
+                "project": "synthetic-project",
+                "stage": "verification",
+                "polarity": "mixed",
+                "felt_result": "The result felt slower than expected.",
+                "expected_result": "A short and reliable verification loop.",
+            },
+        }
+        run = create_run(self.path, "Synthetic dream", scope)
         self.assertEqual(
             link_run_tasks(self.path, run["run_id"], [refs["synthetic-tree"]]), 1
         )
@@ -72,6 +83,40 @@ class DatabaseTests(unittest.TestCase):
         stored = list_runs(self.path)[0]
         self.assertEqual(stored["task_count"], 1)
         self.assertEqual(stored["reviewed_task_count"], 1)
+        self.assertEqual(stored["scope"], scope)
+
+    def test_dream_run_requires_an_explicit_user_anchor_response(self):
+        with self.assertRaisesRegex(ValueError, "requires user_anchor"):
+            create_run(self.path, "Missing anchor", {"days": 7})
+
+        run = create_run(
+            self.path,
+            "No special focus",
+            {
+                "days": 7,
+                "user_anchor": {
+                    "status": "none",
+                    "reason": "User asked to use the default review scope.",
+                },
+            },
+        )
+        self.assertEqual(run["status"], "active")
+
+    def test_provided_user_anchor_requires_comparable_human_expectations(self):
+        with self.assertRaisesRegex(ValueError, "expected_result"):
+            create_run(
+                self.path,
+                "Incomplete anchor",
+                {
+                    "user_anchor": {
+                        "status": "provided",
+                        "project": "synthetic-project",
+                        "stage": "implementation",
+                        "polarity": "negative",
+                        "felt_result": "The work felt ineffective.",
+                    }
+                },
+            )
 
     def test_upsert_preserves_unmentioned_sessions_for_incremental_sync(self):
         write_sessions(

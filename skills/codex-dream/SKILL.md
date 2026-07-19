@@ -23,13 +23,26 @@ the user to restart Codex so the installed Skill becomes discoverable in new ses
    initialize the current project merely because the command was invoked there.
 4. Treat the current directory as instruction context, not storage selection. It does not
    restrict review to the current project unless the user explicitly requests that scope.
-5. State the time range, project scope and exclusions before reading sessions.
-6. On the first run, execute a 30-day dry-run preview and stop for confirmation before
+5. Before reading sessions or calling `run-start`, ask exactly one lightweight focus question:
+
+   > Before we begin, in your recent work was there a project and stage that felt notably
+   > good and worth preserving, or notably poor and inconsistent with your expectations?
+   > Tell me the project, stage, what you experienced, and what you expected. If nothing
+   > stands out, say "no special focus; use the default Dream scope."
+
+   Ask this even when the user's initial instruction is only "开始做梦". Do not replace the
+   question with the agent's own ranking of what seems important.
+6. Convert the response into a compact `user_anchor`, restate it with the time range, project
+   scope, and exclusions, and allow the user to correct it. Ask at most one follow-up when a
+   material field cannot be represented without guessing. A user who states no special focus
+   has answered the gate; do not force a longer interview.
+7. On the first run, execute a 30-day dry-run preview and stop for confirmation before
    writing the ledger. After confirmation, establish the 30-day ledger but review only
    the latest 7 days first.
-7. For an established V2 workspace, start a tracked `DREAM-*` cycle after scope is
-   confirmed. Link only task references actually reviewed, and complete the cycle only
-   after its sanitized report is persisted and passes privacy audit.
+8. For an established V2 workspace, start a tracked `DREAM-*` cycle only after the
+   `user_anchor` and remaining scope are confirmed. Link only task references actually
+   reviewed, and complete the cycle only after its sanitized report is persisted and passes
+   privacy audit.
 
 Keep real sessions and Dream results out of the distributable seed repository. If invoked
 from the seed source tree, use the resolved external workspace for every mutable artifact.
@@ -45,8 +58,28 @@ resolutions for ambiguous legacy records, apply only when `can_apply` is true, t
 
 ## Build the review batch
 
-Start the cycle with `codex-dream run-start --title <title> --scope <json>`. Preserve the
-returned `DREAM-*` ID for the report and final checkpoint.
+Start the cycle with `codex-dream run-start --title <title> --scope <json>`. The scope must
+include one of these forms:
+
+```json
+{
+  "user_anchor": {
+    "status": "provided",
+    "project": "project or cross-project",
+    "stage": "the relevant stage",
+    "polarity": "positive | negative | mixed",
+    "felt_result": "the user's experience",
+    "expected_result": "the user's expectation"
+  }
+}
+```
+
+```json
+{"user_anchor": {"status": "none"}}
+```
+
+The second form means the user explicitly chose the default review; it is not permission to
+skip the question. Preserve the returned `DREAM-*` ID for the report and final checkpoint.
 
 Run:
 
@@ -68,6 +101,11 @@ review. Read [references/privacy.md](references/privacy.md) before writing share
 artifacts. Read [references/knowledge-lifecycle.md](references/knowledge-lifecycle.md)
 when creating or updating knowledge. Read [references/report-format.md](references/report-format.md)
 when producing a cycle report.
+
+Treat the user anchor as the primary investigation hypothesis, not a predetermined conclusion.
+Spend the main review attention on evidence that supports, qualifies, or contradicts it. Keep a
+background scan for sufficiently important chronic or cross-project patterns so the anchor does
+not hide accumulated problems.
 
 ## Persist before checkpointing
 

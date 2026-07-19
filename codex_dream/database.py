@@ -328,6 +328,47 @@ def list_runs(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     ]
 
 
+def validate_run_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
+    """Require an explicit human focus response before a native Dream run starts."""
+    if not isinstance(scope, dict):
+        raise ValueError("dream run scope must be a JSON object")
+
+    anchor = scope.get("user_anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError(
+            "dream run scope requires user_anchor; ask for the user's recent "
+            "positive or negative experience before run-start"
+        )
+
+    status = anchor.get("status")
+    if status not in {"provided", "none"}:
+        raise ValueError("user_anchor.status must be 'provided' or 'none'")
+    if status == "none":
+        return scope
+
+    required_fields = (
+        "project",
+        "stage",
+        "polarity",
+        "felt_result",
+        "expected_result",
+    )
+    missing = [
+        field
+        for field in required_fields
+        if not isinstance(anchor.get(field), str) or not anchor[field].strip()
+    ]
+    if missing:
+        raise ValueError(
+            "provided user_anchor requires non-empty fields: " + ", ".join(missing)
+        )
+    if anchor["polarity"] not in {"positive", "negative", "mixed"}:
+        raise ValueError(
+            "user_anchor.polarity must be 'positive', 'negative', or 'mixed'"
+        )
+    return scope
+
+
 def create_run(
     path: Path, title: str, scope: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -335,6 +376,7 @@ def create_run(
     title = title.strip()
     if not title:
         raise ValueError("dream run title is required")
+    scope = validate_run_scope(scope)
     started_at = _now()
     with open_database(path) as connection:
         values = [
@@ -349,7 +391,7 @@ def create_run(
                 run_id, status, started_at, title, scope_json, summary_json, origin
             ) VALUES (?, 'active', ?, ?, ?, '{}', 'native')
             """,
-            (run_id, started_at, title, json.dumps(scope or {}, ensure_ascii=False, sort_keys=True)),
+            (run_id, started_at, title, json.dumps(scope, ensure_ascii=False, sort_keys=True)),
         )
     return {"run_id": run_id, "status": "active", "started_at": started_at, "title": title}
 

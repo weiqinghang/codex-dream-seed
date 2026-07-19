@@ -304,11 +304,18 @@ codex-dream-review
 
 Schema V2 把一次做梦变成正式的 `DREAM-*` 周期。确定本次范围后开始记录：
 
+在读取 Session 之前，Codex 会先询问用户近期哪个项目、哪个环节做得好或不好，以及实际
+体感和原本预期。这个回答是本轮优先调查的假设，不是预设结论；如果没有特别关注，也要
+明确记录用户选择了默认复盘。`run-start` 会拒绝没有 `user_anchor` 的新周期。
+
 ```bash
 codex-dream run-start \
   --title "最近 7 天增量复盘" \
-  --scope '{"days": 7, "projects": ["all"]}'
+  --scope '{"days":7,"projects":["backlog-gate"],"user_anchor":{"status":"provided","project":"backlog-gate","stage":"执行与收口","polarity":"negative","felt_result":"过程绕路且效果不符合预期","expected_result":"更直接地完成可靠闭环"}}'
 ```
+
+没有特别关注时使用 `"user_anchor":{"status":"none"}`。这只表示用户已经回答并选择默认
+范围，不能用来跳过启动提问。
 
 语义审阅结束后关联实际处理的脱敏 `TASK-*`，并在报告通过隐私检查后完成周期：
 
