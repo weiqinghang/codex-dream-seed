@@ -21,7 +21,6 @@ from .database import (
     get_user_action,
     list_run_ids_by_task_refs,
     list_runs,
-    list_run_events,
     list_user_actions,
     load_review_cards,
     runtime_counts,
@@ -36,9 +35,7 @@ from .workspace import resolve_workspace
 CONSOLE_ACTIONS = {"enter_trial", "reject", "defer"}
 NEXT_INSTRUCTION = "继续处理我刚才在 Dream Console 中确认的事项。"
 BOARD_COLUMNS = (
-    {"id": "dreaming", "label": "做梦中", "wip_limit": 2},
-    {"id": "decision_pending", "label": "待决策", "wip_limit": 5},
-    {"id": "handoff_pending", "label": "待接续", "wip_limit": 3},
+    {"id": "decision_pending", "label": "待决策 Inbox", "wip_limit": None},
     {"id": "trial_active", "label": "试用落实", "wip_limit": 3},
     {"id": "validation_active", "label": "验证中", "wip_limit": 5},
     {"id": "closeout", "label": "待收尾", "wip_limit": 3},
@@ -325,7 +322,7 @@ class ConsoleService:
                 next_action = "查看失败原因并决定重试或结束"
                 acceptance = {"status": "handoff_failed", "missing": ["human_decision"]}
             elif handoff.get("status") in {"handoff_pending", "claimed"}:
-                stage = "handoff_pending"
+                stage = "trial_active"
                 next_action = (
                     "等待 Codex 回写执行结果"
                     if handoff.get("status") == "claimed"
@@ -337,7 +334,7 @@ class ConsoleService:
                 next_action = "补齐试用落实与验证记录"
                 acceptance = {"status": "missing_adoption", "missing": ["adoption"]}
         elif candidate.get("status") == "accepted":
-            stage = "handoff_pending"
+            stage = "trial_active"
             next_action = "补齐试用落实与验证记录"
             acceptance = {"status": "missing_handoff", "missing": ["handoff"]}
         elif deferred_until:
@@ -353,12 +350,16 @@ class ConsoleService:
         if handoff:
             related_ids.append(str(handoff.get("action_id")))
         health = "attention" if stage == "closeout" else "normal"
+        source_dream_ids = self._source_dream_ids(candidate, run_ids_by_task_ref)
+        priority_factors = self._priority(candidate)[2]
+        scope = candidate.get("scope") or item.get("scope")
+        scope_breadth = {"session": 1, "project": 2, "cross_project": 3, "global": 4}.get(str(scope), 0)
         card = {
             "card_id": card_id,
             "entity_type": entity_type,
             "stage": stage,
             "title": candidate.get("title") or item.get("title") or "未命名改进",
-            "scope": candidate.get("scope") or item.get("scope"),
+            "scope": scope,
             "projects": sorted({str(value) for value in candidate.get("projects", [])}),
             "age_days": self._age_days(stage_started_at),
             "health": health,
@@ -366,13 +367,19 @@ class ConsoleService:
             "evidence_summary": evidence_summary,
             "acceptance": acceptance,
             "next_action": next_action,
-            "source_dream_ids": self._source_dream_ids(candidate, run_ids_by_task_ref),
+            "source_dream_ids": source_dream_ids,
             "related_ids": related_ids,
             "knowledge_id": str(item.get("knowledge_id")),
             "success_criteria": success_criteria if validation else [],
             "criterion_assessments": criterion_assessments if validation else [],
             "max_validation_days": self._integer(contract.get("max_validation_days"), 0) if validation else None,
             "timeline": self._knowledge_timeline(str(item.get("knowledge_id"))),
+            "sort_metrics": {
+                "value_impact": priority_factors["value_impact"],
+                "scope_breadth": scope_breadth,
+                "proposed_at": candidate.get("proposed_at"),
+                "dream_mentions": len(source_dream_ids),
+            },
         }
         return card, {"closeout_ready": closeout_ready, "aging": aging}
 
@@ -391,37 +398,6 @@ class ConsoleService:
         run_ids_by_task_ref = list_run_ids_by_task_refs(self.database, task_refs)
         cards: list[dict[str, Any]] = []
         advisories: list[dict[str, Any]] = []
-
-        run_events = list_run_events(self.database)
-        for run in self.runs():
-            stage = "dreaming" if run.get("status") == "active" else ("closeout" if run.get("status") == "failed" else "done")
-            ended_at = run.get("completed_at") if stage == "done" else None
-            cards.append(
-                {
-                    "card_id": run.get("run_id"),
-                    "entity_type": "dream",
-                    "stage": stage,
-                    "title": run.get("title") or "未命名梦境",
-                    "scope": "dream",
-                    "projects": [],
-                    "age_days": self._age_days(ended_at or run.get("started_at")),
-                    "health": "normal",
-                    "progress": None,
-                    "evidence_summary": None,
-                    "acceptance": {
-                        "status": "completed" if stage == "done" else "in_progress",
-                        "missing": [] if stage == "done" else ["dream_completion"],
-                    },
-                    "next_action": (
-                        "查看梦境结论与后续改进"
-                        if stage == "done"
-                        else "继续完成复盘、持久化与隐私审计"
-                    ),
-                    "source_dream_ids": [str(run.get("run_id"))],
-                    "related_ids": [str(run.get("run_id"))],
-                    "timeline": [event for event in run_events if event.get("run_id") == run.get("run_id")],
-                }
-            )
 
         for item in items:
             for candidate in item.get("candidates", []):
@@ -847,12 +823,12 @@ class ConsoleService:
             wip_override_reason = None
             if action == "enter_trial":
                 board = self.board()
-                column = next(value for value in board["columns"] if value["id"] == "handoff_pending")
+                column = next(value for value in board["columns"] if value["id"] == "trial_active")
                 if column["count"] >= column["wip_limit"]:
                     wip_override_reason = str(payload.get("wip_override_reason", "")).strip()
                     if len(wip_override_reason) < 3:
                         raise ConsoleError(
-                            f"handoff WIP is {column['count']}/{column['wip_limit']}; wip_override_reason is required"
+                            f"trial WIP is {column['count']}/{column['wip_limit']}; wip_override_reason is required"
                         )
             deferred_until = None
             if action == "defer":

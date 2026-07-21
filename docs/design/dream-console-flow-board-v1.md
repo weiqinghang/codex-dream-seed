@@ -56,17 +56,20 @@ WIP。卡片保留所有关联 ID，进入详情后展示完整生命周期。
 
 | Column | 主实体 | 进入条件 | 离开条件 | 建议初始 WIP |
 | --- | --- | --- | --- | --- |
-| 做梦中 | DREAM | native Dream 为 active | 完成、失败或安全暂停 | 2 |
-| 待决策 | CAN | candidate 为 proposed，且未处于有效 defer | 拒绝、暂缓或确认试用 | 5 |
-| 待接续 | ACT/CAN | 试用已确认但尚未由 Codex 完成 handoff | handoff completed 或 failed | 3 |
-| 试用落实 | ADP | adoption planned，或 applied 但尚无 validation | 建立 validation、回滚或结束 | 3 |
+| 待决策 Inbox | CAN | candidate 为 proposed，且未处于有效 defer | 拒绝、暂缓或确认试用 | 不设上限，不计活动 WIP |
+| 试用落实 | ACT/ADP/CAN | 试用已确认，正在接续或落实；或 applied 但尚无 validation | 建立 validation、回滚或结束 | 3 |
 | 验证中 | VAL | validation pending/validating | proven、failed 或 inconclusive | 5 |
 | 待收尾 | VAL/ACT | 样本已达目标、期限到期、冲突证据或接续失败 | 用户确认继续、调整、固化或结束 | 3 |
 | 已暂缓 | CAN | 用户设置的 defer 仍有效 | 提醒到期后重新进入待决策，或用户提前恢复 | 不计 WIP |
 | 已结束 | 任意 | completed/rejected/superseded/rolled_back/proven 等终态 | 只保留近期窗口 | 不计 WIP |
 
-WIP 数量必须按主卡去重。默认限制是建议值，不是强制政策；用户可以超限，但必须看到被挤占的
-既有承诺，并为 override 留下理由。
+WIP 数量必须按主卡去重。Dream 运行过程在独立“梦境”页面观察，不占改进承诺 WIP；尚未被
+用户拉入试用的候选是 Inbox，也不占 WIP。默认限制是建议值，不是强制政策；用户可以超限，
+但必须看到被挤占的既有承诺，并为 override 留下理由。
+
+列内排序不修改事实状态。用户可以选择：价值与影响面从高到低（先比较显式 `value_impact`，
+再比较 session/project/cross_project/global 作用范围）、提出时间早到晚或晚到早、来源 Dream
+提及次数从多到少。卡片必须显示相同指标，使排序理由可见。
 
 ## 4. 卡片契约
 
@@ -111,14 +114,14 @@ Codex 处理”指令，不自行执行建议。
 ## 6. 端到端用户旅程
 
 1. 用户在 Codex 中开始一次 Dream，确认 user anchor、范围和排除项。
-2. Console Board 出现 DREAM 卡，显示当前阶段和已经停留的时间。
-3. Dream 完成后，DREAM 卡进入最近完成区；新候选进入“待决策”，并保留来源 Dream。
+2. Dream 运行状态和历史留在“梦境”页面，不占改进承诺 WIP。
+3. Dream 完成后，新候选进入“待决策 Inbox”，并保留来源 Dream。
 4. 用户打开 Console，先看到 WIP 总览、最老卡片和最多三个确定性建议。
-5. 用户按“最接近完成”“最老”“项目/范围”浏览，而不是默认只看最新候选。
+5. 用户按价值/影响面、提出时间或 Dream 提及次数排序，并结合项目/范围筛选。
 6. 用户打开卡片详情，查看状态时间线、证据、反例、成功标准、范围和下一步后果。
 7. 对候选，用户选择暂缓、拒绝或进入试用；WIP 已满时，Console 先展示需要收尾或调整的
    既有卡片，并要求记录超限理由。
-8. 进入试用后，Console 生成 handoff；Codex 领取后建立 Adoption 和 Validation，并回写结果。
+8. 进入试用后，Console 生成 handoff 并进入“试用落实”；Codex 领取后建立 Adoption 和 Validation，并回写结果。
 9. 后续 Dream 将新证据追加到 Validation；Board 更新样本进度、正反证据和阶段年龄。
 10. 达到目标、到期或出现冲突信号时，卡片进入“待收尾”，而不是无限留在“验证中”。
 11. 用户选择继续、调整、固化或结束；最终决定必须可追溯，卡片才进入“已结束”。
@@ -143,7 +146,8 @@ Codex 处理”指令，不自行执行建议。
 
 **作为**用户，**我希望**按列浏览卡片并按项目、范围、健康度筛选，**从而**快速找到拥塞点。
 
-验收：响应式 Board、列头 WIP/上限/最老年龄、卡片五问元数据、键盘可访问、窄屏列表退化。
+验收：响应式 Board、Inbox 与活动 WIP 分离、列头 WIP/上限/最老年龄、可解释排序、卡片五问
+元数据、键盘可访问、窄屏列表退化。
 
 ### Slice 3：Dream 阶段事件与单卡时间线
 

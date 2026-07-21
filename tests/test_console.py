@@ -199,7 +199,8 @@ class ConsoleServiceTests(unittest.TestCase):
         board = self.service.board()
 
         self.assertEqual(board["counts"]["decision_pending"], 1)
-        self.assertEqual(board["columns"][1]["wip_limit"], 5)
+        self.assertEqual(board["columns"][0]["id"], "decision_pending")
+        self.assertIsNone(board["columns"][0]["wip_limit"])
         self.assertEqual(len(board["cards"]), 1)
         card = board["cards"][0]
         self.assertEqual(card["card_id"], self.candidate_id)
@@ -207,6 +208,9 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(card["stage"], "decision_pending")
         self.assertEqual(card["projects"], ["fixture"])
         self.assertEqual(card["next_action"], "查看证据并决定是否进入试用")
+        self.assertEqual(card["sort_metrics"]["value_impact"], 3)
+        self.assertEqual(card["sort_metrics"]["scope_breadth"], 2)
+        self.assertEqual(card["sort_metrics"]["dream_mentions"], 0)
 
     def test_board_promotes_validation_to_closeout_when_eligible_target_is_met(self):
         record_event(
@@ -275,7 +279,7 @@ class ConsoleServiceTests(unittest.TestCase):
             "closeout_ready", {advisory["type"] for advisory in board["advisories"]}
         )
 
-    def test_board_emits_wip_advisory_without_changing_candidate_state(self):
+    def test_candidate_inbox_has_no_wip_advisory_or_state_change(self):
         for index in range(5):
             item = create_knowledge(
                 self.workspace / "knowledge",
@@ -296,21 +300,19 @@ class ConsoleServiceTests(unittest.TestCase):
         board = self.service.board()
 
         self.assertEqual(board["counts"]["decision_pending"], 6)
-        advisory = next(
-            item for item in board["advisories"] if item["type"] == "wip_exceeded"
+        self.assertFalse(
+            any(item["type"] == "wip_exceeded" and item["stage"] == "decision_pending" for item in board["advisories"])
         )
-        self.assertEqual(advisory["stage"], "decision_pending")
-        self.assertEqual(advisory["count"], 6)
-        self.assertEqual(advisory["limit"], 5)
         item = load_item(self.workspace / "knowledge", self.knowledge_id)
         self.assertEqual(item["candidates"][0]["status"], "proposed")
 
     def test_workspace_wip_policy_is_audited_and_requires_override_at_capacity(self):
         result = self.service.update_board_policy(
-            {"reason": "合成容量测试。", "limits": {"dreaming": 2, "decision_pending": 5, "handoff_pending": 1, "trial_active": 3, "validation_active": 5, "closeout": 3}}
+            {"reason": "合成容量测试。", "limits": {"trial_active": 1, "validation_active": 5, "closeout": 3}}
         )
-        self.assertEqual(result["limits"]["handoff_pending"], 1)
+        self.assertEqual(result["limits"]["trial_active"], 1)
         self.service.submit_candidate_action({"action": "enter_trial", "knowledge_id": self.knowledge_id, "candidate_id": self.candidate_id, "reason": "先占用一个接续容量。", "trial_plan": self.trial_plan()})
+        self.assertEqual(self.service.board()["counts"]["trial_active"], 1)
         item = create_knowledge(self.workspace / "knowledge", "Second synthetic", "reusable_work", "project", "Second candidate.")
         candidate = record_event(self.workspace / "knowledge", item["knowledge_id"], "candidate_proposed", candidate_payload())
         with self.assertRaisesRegex(ConsoleError, "wip_override_reason"):
@@ -335,7 +337,7 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(current["contract"]["eligible_sessions_target"], 2)
         self.assertEqual(len(current["contract_history"]), 1)
 
-    def test_board_includes_active_dream_without_exposing_private_scope_payload(self):
+    def test_board_leaves_active_dreams_on_the_dedicated_runs_surface(self):
         run = create_run(
             self.service.database,
             "Synthetic active dream",
@@ -350,11 +352,10 @@ class ConsoleServiceTests(unittest.TestCase):
 
         board = self.service.board()
 
-        dream = next(card for card in board["cards"] if card["card_id"] == run["run_id"])
-        self.assertEqual(dream["stage"], "dreaming")
-        serialized = json.dumps(dream)
-        self.assertNotIn(str(self.workspace), serialized)
-        self.assertNotIn("user_anchor", serialized)
+        self.assertNotIn("dreaming", board["counts"])
+        self.assertNotIn("handoff_pending", board["counts"])
+        self.assertFalse(any(card["card_id"] == run["run_id"] for card in board["cards"]))
+        self.assertEqual(self.service.runs()[0]["run_id"], run["run_id"])
 
     def test_http_api_requires_local_action_token_for_writes(self):
         server = ThreadingHTTPServer(
@@ -415,7 +416,10 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertIn('id="view-board"', html)
         self.assertIn('aria-label="梦境推进泳道"', html)
         self.assertIn('id="policy-form"', html)
+        self.assertIn('id="board-sort"', html)
+        self.assertIn('value="mentions_desc"', html)
         self.assertIn("renderBoard()", javascript)
+        self.assertIn("compareBoardCards", javascript)
         self.assertNotIn("innerHTML = item.", javascript)
 
 

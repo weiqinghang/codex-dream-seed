@@ -7,6 +7,7 @@ const state = {
   handoffs: [],
   board: {columns: [], cards: [], advisories: [], counts: {}},
   boardFilters: {project: "all", scope: "all", health: "all"},
+  boardSort: "value_desc",
   filter: "all",
   selected: null,
 };
@@ -137,15 +138,36 @@ function boardCard(card) {
   const percentage = progress?.target ? Math.min(100, Math.round(progress.current / progress.target * 100)) : 0;
   const tags = [...(card.projects || []).slice(0, 1), card.scope].filter(Boolean);
   const progressClass = `progress-p${Math.round(percentage / 10)}`;
+  const metrics = card.sort_metrics || {};
+  const impactLabels = ["未知", "会话", "项目", "跨项目", "全局"];
   return `<button type="button" class="flow-card ${card.health === "attention" ? "is-attention" : ""}" data-board-card="${escapeHtml(card.card_id)}">
     <span class="flow-card-meta"><b>${escapeHtml(card.entity_type)} · ${escapeHtml(card.card_id)}</b><span>${card.age_days ?? 0} 天</span></span>
     <h3>${escapeHtml(card.title)}</h3>
     ${tags.length ? `<span class="flow-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
+    <span class="flow-card-signals"><span>价值 ${metrics.value_impact ?? 0}/5</span><span>${impactLabels[metrics.scope_breadth] || "未知"}</span><span>Dream ${metrics.dream_mentions ?? 0} 次</span></span>
     ${progress ? `<span class="progress-track" aria-label="验证进度 ${progress.current}/${progress.target}"><i class="${progressClass}"></i></span>` : ""}
     ${progress ? `<span class="flow-card-line"><b>进度</b><span>${progress.current}/${progress.target} 个合格任务</span></span>` : ""}
     ${missing.length ? `<span class="flow-card-line"><b>缺口</b><span>${missing.map(humanizeGap).join("、")}</span></span>` : ""}
     <span class="flow-card-line"><b>下一步</b><span>${escapeHtml(card.next_action)}</span></span>
   </button>`;
+}
+
+function compareBoardCards(left, right) {
+  const a = left.sort_metrics || {};
+  const b = right.sort_metrics || {};
+  let result = 0;
+  if (state.boardSort === "value_desc") {
+    result = (b.value_impact || 0) - (a.value_impact || 0)
+      || (b.scope_breadth || 0) - (a.scope_breadth || 0);
+  } else if (state.boardSort === "mentions_desc") {
+    result = (b.dream_mentions || 0) - (a.dream_mentions || 0);
+  } else {
+    const aTime = Date.parse(a.proposed_at || "");
+    const bTime = Date.parse(b.proposed_at || "");
+    if (Number.isNaN(aTime) !== Number.isNaN(bTime)) result = Number.isNaN(aTime) ? 1 : -1;
+    else if (!Number.isNaN(aTime)) result = state.boardSort === "oldest_first" ? aTime - bTime : bTime - aTime;
+  }
+  return result || String(left.card_id).localeCompare(String(right.card_id));
 }
 
 function humanizeGap(value) {
@@ -168,11 +190,12 @@ function renderBoardFilters() {
 function renderBoard() {
   const {columns = [], cards = [], advisories = []} = state.board;
   const active = columns.filter((column) => column.wip_limit !== null);
+  const activeStages = new Set(active.map((column) => column.id));
   const over = active.filter((column) => column.count > column.wip_limit);
   const closeout = columns.find((column) => column.id === "closeout")?.count || 0;
   $("#nav-board-count").textContent = advisories.length;
   $("#board-summary").innerHTML = [
-    [cards.filter((card) => !["done", "deferred"].includes(card.stage)).length, "活跃 WIP", over.length ? "is-warning" : ""],
+    [cards.filter((card) => activeStages.has(card.stage)).length, "活跃 WIP", over.length ? "is-warning" : ""],
     [closeout, "等待收尾", closeout ? "is-warning" : ""],
     [over.length, "超限泳道", over.length ? "is-warning" : ""],
     [cards.filter((card) => card.health === "attention").length, "需关注卡片", ""],
@@ -183,10 +206,10 @@ function renderBoard() {
     (state.boardFilters.scope === "all" || card.scope === state.boardFilters.scope) &&
     (state.boardFilters.health === "all" || card.health === state.boardFilters.health));
   $("#flow-board").innerHTML = columns.map((column) => {
-    const values = filtered.filter((card) => card.stage === column.id);
-    const limit = column.wip_limit === null ? "∞" : column.wip_limit;
+    const values = filtered.filter((card) => card.stage === column.id).sort(compareBoardCards);
+    const capacity = column.wip_limit === null ? `${column.count} 项` : `${column.count}/${column.wip_limit}`;
     return `<section class="board-column ${column.wip_limit !== null && column.count > column.wip_limit ? "is-over" : ""}" aria-labelledby="column-${column.id}">
-      <header class="column-head"><h2 id="column-${column.id}">${escapeHtml(column.label)}</h2><b>${column.count}/${limit}</b><small>最老 ${column.oldest_age_days || 0} 天${values.length !== column.count ? ` · 显示 ${values.length}` : ""}</small></header>
+      <header class="column-head"><h2 id="column-${column.id}">${escapeHtml(column.label)}</h2><b>${capacity}</b><small>最老 ${column.oldest_age_days || 0} 天${values.length !== column.count ? ` · 显示 ${values.length}` : ""}</small></header>
       <div class="column-cards">${values.length ? values.map(boardCard).join("") : '<div class="column-empty">当前无事项</div>'}</div>
     </section>`;
   }).join("");
@@ -388,8 +411,8 @@ function startDecision(action) {
     $("#trial-success").value = item.validation_plan || "";
     $("#trial-reason").value = "";
     $("#criteria-confirmed").checked = false;
-    const handoff = state.board.columns.find((column) => column.id === "handoff_pending");
-    const atCapacity = handoff && handoff.count >= handoff.wip_limit;
+    const trial = state.board.columns.find((column) => column.id === "trial_active");
+    const atCapacity = trial && trial.count >= trial.wip_limit;
     $("#wip-override-field").classList.toggle("is-hidden", !atCapacity);
     $("#wip-override-reason").value = "";
     window.setTimeout(() => $("#trial-proposal").focus(), 50);
@@ -445,7 +468,7 @@ async function submitDecision(event) {
     if (!$("#wip-override-field").classList.contains("is-hidden")) {
       payload.wip_override_reason = $("#wip-override-reason").value.trim();
       if (payload.wip_override_reason.length < 3) {
-        $("#form-status").textContent = "待接续泳道已满，请说明为什么仍要开启新事项。";
+        $("#form-status").textContent = "试用落实泳道已满，请说明为什么仍要开启新事项。";
         return;
       }
     }
@@ -521,6 +544,10 @@ $("#improvement-dialog").addEventListener("click", (event) => {
   state.boardFilters = {project: $("#board-project-filter").value, scope: $("#board-scope-filter").value, health: $("#board-health-filter").value};
   renderBoard();
 }));
+$("#board-sort").addEventListener("change", (event) => {
+  state.boardSort = event.currentTarget.value;
+  renderBoard();
+});
 $("#open-policy").addEventListener("click", openPolicy);
 $$('[data-board-close]').forEach((button) => button.addEventListener("click", () => $("#board-dialog").close()));
 $$('[data-policy-close]').forEach((button) => button.addEventListener("click", () => $("#policy-dialog").close()));

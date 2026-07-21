@@ -240,7 +240,10 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
 .board-filters { display: flex; flex-wrap: wrap; gap: 9px; }
 .board-filters label { display: grid; gap: 5px; color: var(--quiet); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .board-filters select { min-width: 130px; padding: 8px 28px 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 10px; }
-.flow-board { display: grid; grid-template-columns: repeat(8, minmax(238px, 1fr)); gap: 11px; overflow-x: auto; padding: 2px 2px 18px; scroll-snap-type: x proximity; }
+.board-actions { display: flex; align-items: flex-end; gap: 9px; }
+.board-actions label { display: grid; gap: 5px; color: var(--quiet); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.board-actions select { min-width: 190px; padding: 8px 28px 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 10px; }
+.flow-board { display: grid; grid-template-columns: repeat(6, minmax(238px, 1fr)); gap: 11px; overflow-x: auto; padding: 2px 2px 18px; scroll-snap-type: x proximity; }
 .board-column { min-height: 440px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: #eef1f5; scroll-snap-align: start; }
 .board-column.is-over { border-color: #e4bd64; background: #fff8e8; }
 .column-head { display: grid; grid-template-columns: 1fr auto; gap: 5px; padding: 5px 4px 12px; }
@@ -255,6 +258,7 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
 .flow-card h3 { margin: 0; font-size: 12px; line-height: 1.4; }
 .flow-card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
 .flow-card-tags span { padding: 3px 5px; border-radius: 5px; background: var(--surface-soft); color: var(--muted); font-size: 8px; }
+.flow-card-signals { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; color: var(--quiet); font: 8px var(--mono); }
 .progress-track { height: 4px; overflow: hidden; border-radius: 3px; background: var(--surface-soft); }
 .progress-track i { display: block; height: 100%; background: var(--blue); }
 .progress-p0 { width: 0; } .progress-p1 { width: 10%; } .progress-p2 { width: 20%; }
@@ -352,6 +356,8 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
   .timeline-entry > .status-pill { grid-column: 2; }
   .board-summary { grid-template-columns: 1fr 1fr; }
   .board-toolbar { align-items: stretch; flex-direction: column; }
+  .board-actions { display: grid; grid-template-columns: 1fr auto; }
+  .board-actions select { width: 100%; min-width: 0; }
   .board-filters { display: grid; grid-template-columns: 1fr 1fr; }
   .board-filters label:last-child { grid-column: 1/-1; }
   .board-filters select { width: 100%; min-width: 0; }

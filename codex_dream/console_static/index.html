@@ -86,7 +86,15 @@
               <label>范围<select id="board-scope-filter"><option value="all">全部范围</option></select></label>
               <label>健康度<select id="board-health-filter"><option value="all">全部状态</option><option value="attention">需关注</option><option value="normal">正常</option></select></label>
             </div>
-            <button type="button" class="button ghost" id="open-policy">WIP 策略</button>
+            <div class="board-actions">
+              <label>排序<select id="board-sort">
+                <option value="value_desc">价值 / 影响面（高到低）</option>
+                <option value="oldest_first">提出时间（早到晚）</option>
+                <option value="newest_first">提出时间（晚到早）</option>
+                <option value="mentions_desc">Dream 提及（多到少）</option>
+              </select></label>
+              <button type="button" class="button ghost" id="open-policy">WIP 策略</button>
+            </div>
           </div>
           <div class="flow-board" id="flow-board" aria-label="梦境推进泳道"></div>
         </section>
@@ -139,7 +147,7 @@
             <label>成功标准<textarea id="trial-success" placeholder="每行一条；系统可以建议，但需要你确认"></textarea></label>
             <label class="confirm-row"><input id="criteria-confirmed" type="checkbox"><span>我确认以上成功标准可以用来判断这次实验。</span></label>
             <label>为什么值得尝试<textarea id="trial-reason" minlength="3" placeholder="留下你的决定依据"></textarea></label>
-            <label id="wip-override-field" class="is-hidden">WIP 覆盖理由<textarea id="wip-override-reason" minlength="3" placeholder="当前待接续泳道已满。为什么仍要开启这一项？"></textarea></label>
+            <label id="wip-override-field" class="is-hidden">WIP 覆盖理由<textarea id="wip-override-reason" minlength="3" placeholder="当前试用落实泳道已满。为什么仍要开启这一项？"></textarea></label>
           </div>
           <div class="dialog-actions">
             <button type="button" class="button ghost" data-cancel-action>返回详情</button>
