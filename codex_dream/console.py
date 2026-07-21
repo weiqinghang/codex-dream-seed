@@ -192,14 +192,84 @@ class ConsoleService:
     def _evidence_summary(validation: dict[str, Any]) -> dict[str, int]:
         evidence = validation.get("evidence", [])
         eligible = [value for value in evidence if value.get("eligibility") == "eligible"]
+        known_outcomes = {"positive", "negative", "mixed", "inconclusive"}
         return {
+            "observed": len(evidence),
             "eligible": len(eligible),
+            "excluded": len(evidence) - len(eligible),
             "compliant": sum(value.get("compliance") == "compliant" for value in eligible),
             "positive": sum(value.get("outcome") == "positive" for value in eligible),
             "negative": sum(value.get("outcome") == "negative" for value in eligible),
+            "mixed": sum(value.get("outcome") == "mixed" for value in eligible),
             "inconclusive": sum(
                 value.get("outcome") == "inconclusive" for value in eligible
             ),
+            "unclassified": sum(
+                value.get("outcome") not in known_outcomes for value in eligible
+            ),
+        }
+
+    @staticmethod
+    def _validation_guidance(
+        contract: dict[str, Any], evidence: dict[str, int]
+    ) -> dict[str, Any]:
+        target = ConsoleService._integer(contract.get("eligible_sessions_target"), 0)
+        remaining = max(0, target - evidence["eligible"])
+        uncertain = evidence["mixed"] + evidence["inconclusive"] + evidence["unclassified"]
+        blockers: list[dict[str, str]] = []
+        if evidence["observed"] == 0:
+            blockers.append({
+                "type": "no_feedback",
+                "message": "尚未记录任何真实任务反馈，当前 0% 只表示验证尚未开始采样。",
+            })
+            recommendation = "寻找一个符合适用条件的真实任务，按约定方式执行并记录首次反馈。"
+        elif evidence["eligible"] == 0:
+            blockers.append({
+                "type": "no_eligible_evidence",
+                "message": f"已有 {evidence['observed']} 次反馈，但没有一条被判定为合格任务。",
+            })
+            recommendation = "复核现有反馈为何不符合适用条件，再选择等待合格任务或调整验证合同。"
+        else:
+            if remaining:
+                recommendation = f"再收集 {remaining} 个合格任务。"
+                if evidence["negative"] + uncertain > 0:
+                    recommendation = f"再收集 {remaining} 个合格任务，并优先解释现有反证与未定结果。"
+            else:
+                recommendation = "样本目标已达到；逐条复核成功标准并形成固化、调整或结束决定。"
+        if remaining:
+            blockers.append({
+                "type": "sample_gap",
+                "message": f"距离合格任务目标仍差 {remaining} 个。",
+            })
+        fidelity_gap = evidence["eligible"] - evidence["compliant"]
+        if fidelity_gap > 0:
+            blockers.append({
+                "type": "execution_fidelity",
+                "message": f"{fidelity_gap} 个合格任务未完整按被验证方式执行，结果归因强度较弱。",
+            })
+        if evidence["negative"] > 0:
+            blockers.append({
+                "type": "counterevidence",
+                "message": f"存在 {evidence['negative']} 条负向证据，最终固化前必须解释或调整边界。",
+            })
+        if uncertain > 0:
+            blockers.append({
+                "type": "uncertain_evidence",
+                "message": f"存在 {uncertain} 条混合、未定或未分类结果，不能直接当作正向证明。",
+            })
+        return {
+            "recommendation": recommendation,
+            "blockers": blockers,
+            "contract": {
+                key: contract.get(key)
+                for key in (
+                    "applies_when",
+                    "expected_behavior",
+                    "observable_signals",
+                    "success_criteria",
+                    "failure_signals",
+                )
+            },
         }
 
     @staticmethod
@@ -250,12 +320,17 @@ class ConsoleService:
         next_action = "查看证据并决定是否进入试用"
         progress = None
         evidence_summary = {
+            "observed": 0,
             "eligible": 0,
+            "excluded": 0,
             "compliant": 0,
             "positive": 0,
             "negative": 0,
+            "mixed": 0,
             "inconclusive": 0,
+            "unclassified": 0,
         }
+        validation_guidance = None
         acceptance = {"status": "decision_pending", "missing": ["human_decision"]}
         closeout_ready = False
         aging = False
@@ -278,6 +353,7 @@ class ConsoleService:
                 "target": target,
                 "unit": "eligible_tasks",
             }
+            validation_guidance = self._validation_guidance(contract, evidence_summary)
             status = validation.get("status")
             closeout_ready = bool(
                 status in {"pending", "validating"}
@@ -299,7 +375,7 @@ class ConsoleService:
                 }
             else:
                 stage = "validation_active"
-                next_action = "继续收集符合条件的验证证据"
+                next_action = validation_guidance["recommendation"]
                 acceptance = {"status": "collecting_evidence", "missing": []}
         elif adoption:
             entity_type = "adoption"
@@ -365,6 +441,7 @@ class ConsoleService:
             "health": health,
             "progress": progress,
             "evidence_summary": evidence_summary,
+            "validation_guidance": validation_guidance,
             "acceptance": acceptance,
             "next_action": next_action,
             "source_dream_ids": source_dream_ids,
@@ -379,6 +456,10 @@ class ConsoleService:
                 "scope_breadth": scope_breadth,
                 "proposed_at": candidate.get("proposed_at"),
                 "dream_mentions": len(source_dream_ids),
+                "validation_progress": (
+                    evidence_summary["eligible"] / target if validation and target else 0
+                ),
+                "feedback_count": evidence_summary["observed"],
             },
         }
         return card, {"closeout_ready": closeout_ready, "aging": aging}

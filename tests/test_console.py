@@ -274,10 +274,62 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(card["entity_type"], "validation")
         self.assertEqual(card["stage"], "closeout")
         self.assertEqual(card["progress"], {"current": 1, "target": 1, "unit": "eligible_tasks"})
+        self.assertEqual(card["evidence_summary"]["observed"], 1)
         self.assertEqual(card["evidence_summary"]["positive"], 1)
+        self.assertEqual(card["sort_metrics"]["validation_progress"], 1)
+        self.assertEqual(card["sort_metrics"]["feedback_count"], 1)
         self.assertIn(
             "closeout_ready", {advisory["type"] for advisory in board["advisories"]}
         )
+
+    def test_validation_guidance_separates_feedback_progress_and_counterevidence(self):
+        record_event(self.workspace / "knowledge", self.knowledge_id, "decision_recorded", {"candidate_id": self.candidate_id, "decision": "accepted", "reason": "Synthetic.", "decision_source": "human:test"})
+        adoption = record_event(self.workspace / "knowledge", self.knowledge_id, "adoption_recorded", {"candidate_id": self.candidate_id, "target": "Synthetic", "status": "applied"})
+        validation = record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "validation_started",
+            {"adoption_id": adoption["data"]["adoption_id"], "contract": {"applies_when": ["Synthetic task"], "expected_behavior": ["Use the rule"], "observable_signals": ["A trace exists"], "success_criteria": ["Three tasks improve"], "failure_signals": ["Rework increases"], "eligible_sessions_target": 5, "max_validation_days": 30}},
+        )
+        evidence_rows = [
+            ("TASK-0101", "ineligible", "not_applicable", "inconclusive"),
+            ("TASK-0102", "eligible", "noncompliant", "negative"),
+            ("TASK-0103", "eligible", "compliant", "mixed"),
+        ]
+        for task_ref, eligibility, compliance, outcome in evidence_rows:
+            record_event(
+                self.workspace / "knowledge",
+                self.knowledge_id,
+                "validation_evidence_added",
+                {"validation_id": validation["data"]["validation_id"], "review_unit_id": task_ref, "eligibility": eligibility, "invocation": "synthetic", "compliance": compliance, "outcome": outcome, "summary": "Synthetic classification."},
+            )
+
+        card = self.service.board()["cards"][0]
+
+        self.assertEqual(card["stage"], "validation_active")
+        self.assertEqual(card["progress"]["current"], 2)
+        self.assertEqual(card["evidence_summary"]["observed"], 3)
+        self.assertEqual(card["evidence_summary"]["eligible"], 2)
+        self.assertEqual(card["evidence_summary"]["excluded"], 1)
+        self.assertEqual(card["evidence_summary"]["negative"], 1)
+        self.assertEqual(card["evidence_summary"]["mixed"], 1)
+        self.assertEqual(card["sort_metrics"]["validation_progress"], 0.4)
+        self.assertEqual(card["sort_metrics"]["feedback_count"], 3)
+        self.assertIn("再收集 3 个合格任务", card["next_action"])
+        blocker_types = {value["type"] for value in card["validation_guidance"]["blockers"]}
+        self.assertTrue({"sample_gap", "execution_fidelity", "counterevidence", "uncertain_evidence"}.issubset(blocker_types))
+        self.assertEqual(card["validation_guidance"]["contract"]["failure_signals"], ["Rework increases"])
+
+    def test_validation_with_no_feedback_recommends_first_real_task(self):
+        record_event(self.workspace / "knowledge", self.knowledge_id, "decision_recorded", {"candidate_id": self.candidate_id, "decision": "accepted", "reason": "Synthetic.", "decision_source": "human:test"})
+        adoption = record_event(self.workspace / "knowledge", self.knowledge_id, "adoption_recorded", {"candidate_id": self.candidate_id, "target": "Synthetic", "status": "applied"})
+        record_event(self.workspace / "knowledge", self.knowledge_id, "validation_started", {"adoption_id": adoption["data"]["adoption_id"], "contract": {"applies_when": ["Synthetic task"], "expected_behavior": ["Use the rule"], "observable_signals": ["A trace exists"], "success_criteria": ["One task improves"], "failure_signals": ["Rework increases"], "eligible_sessions_target": 3, "max_validation_days": 30}})
+
+        card = self.service.board()["cards"][0]
+
+        self.assertEqual(card["evidence_summary"]["observed"], 0)
+        self.assertIn("真实任务", card["next_action"])
+        self.assertEqual(card["validation_guidance"]["blockers"][0]["type"], "no_feedback")
 
     def test_candidate_inbox_has_no_wip_advisory_or_state_change(self):
         for index in range(5):
@@ -407,6 +459,7 @@ class ConsoleServiceTests(unittest.TestCase):
         static_root = Path(__file__).parents[1] / "codex_dream" / "console_static"
         html = (static_root / "index.html").read_text(encoding="utf-8")
         javascript = (static_root / "app.js").read_text(encoding="utf-8")
+        stylesheet = (static_root / "app.css").read_text(encoding="utf-8")
         self.assertNotIn("data-decision=\"accepted\"", html)
         self.assertNotIn(">接受<", html)
         self.assertGreaterEqual(html.count('type="button"'), 8)
@@ -420,6 +473,10 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertIn('value="mentions_desc"', html)
         self.assertIn("renderBoard()", javascript)
         self.assertIn("compareBoardCards", javascript)
+        self.assertIn("compareValidationCards", javascript)
+        self.assertIn('value="feedback_desc"', javascript)
+        self.assertIn(".evidence-negative", stylesheet)
+        self.assertIn("哪些事情会影响验收", javascript)
         self.assertNotIn("innerHTML = item.", javascript)
 
 

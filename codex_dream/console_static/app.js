@@ -8,6 +8,7 @@ const state = {
   board: {columns: [], cards: [], advisories: [], counts: {}},
   boardFilters: {project: "all", scope: "all", health: "all"},
   boardSort: "value_desc",
+  validationSort: "progress_desc",
   filter: "all",
   selected: null,
 };
@@ -135,9 +136,7 @@ function renderRuns() {
 function boardCard(card) {
   const missing = card.acceptance?.missing || [];
   const progress = card.progress;
-  const percentage = progress?.target ? Math.min(100, Math.round(progress.current / progress.target * 100)) : 0;
   const tags = [...(card.projects || []).slice(0, 1), card.scope].filter(Boolean);
-  const progressClass = `progress-p${Math.round(percentage / 10)}`;
   const metrics = card.sort_metrics || {};
   const impactLabels = ["未知", "会话", "项目", "跨项目", "全局"];
   return `<button type="button" class="flow-card ${card.health === "attention" ? "is-attention" : ""}" data-board-card="${escapeHtml(card.card_id)}">
@@ -145,11 +144,23 @@ function boardCard(card) {
     <h3>${escapeHtml(card.title)}</h3>
     ${tags.length ? `<span class="flow-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
     <span class="flow-card-signals"><span>价值 ${metrics.value_impact ?? 0}/5</span><span>${impactLabels[metrics.scope_breadth] || "未知"}</span><span>Dream ${metrics.dream_mentions ?? 0} 次</span></span>
-    ${progress ? `<span class="progress-track" aria-label="验证进度 ${progress.current}/${progress.target}"><i class="${progressClass}"></i></span>` : ""}
-    ${progress ? `<span class="flow-card-line"><b>进度</b><span>${progress.current}/${progress.target} 个合格任务</span></span>` : ""}
+    ${progress ? evidenceProgress(card) : ""}
+    ${progress ? `<span class="flow-card-line"><b>进度</b><span>${progress.current}/${progress.target} 个合格任务 · ${card.evidence_summary?.observed || 0} 次反馈</span></span>` : ""}
     ${missing.length ? `<span class="flow-card-line"><b>缺口</b><span>${missing.map(humanizeGap).join("、")}</span></span>` : ""}
     <span class="flow-card-line"><b>下一步</b><span>${escapeHtml(card.next_action)}</span></span>
   </button>`;
+}
+
+function evidenceProgress(card) {
+  const evidence = card.evidence_summary || {};
+  const target = card.progress?.target || 0;
+  const segment = (kind, count) => count && target
+    ? `<i class="evidence-segment evidence-${kind} progress-p${Math.min(10, Math.max(1, Math.round(count / target * 10)))}"></i>`
+    : "";
+  const uncertain = (evidence.mixed || 0) + (evidence.inconclusive || 0) + (evidence.unclassified || 0);
+  return `<span class="progress-track evidence-track" aria-label="验证进度 ${card.progress.current}/${target}，正向 ${evidence.positive || 0}，负向 ${evidence.negative || 0}，混合或未定 ${uncertain}">
+    ${segment("positive", evidence.positive || 0)}${segment("negative", evidence.negative || 0)}${segment("uncertain", uncertain)}
+  </span>`;
 }
 
 function compareBoardCards(left, right) {
@@ -167,6 +178,15 @@ function compareBoardCards(left, right) {
     if (Number.isNaN(aTime) !== Number.isNaN(bTime)) result = Number.isNaN(aTime) ? 1 : -1;
     else if (!Number.isNaN(aTime)) result = state.boardSort === "oldest_first" ? aTime - bTime : bTime - aTime;
   }
+  return result || String(left.card_id).localeCompare(String(right.card_id));
+}
+
+function compareValidationCards(left, right) {
+  const a = left.sort_metrics || {};
+  const b = right.sort_metrics || {};
+  const progress = (b.validation_progress || 0) - (a.validation_progress || 0);
+  const feedback = (b.feedback_count || 0) - (a.feedback_count || 0);
+  const result = state.validationSort === "feedback_desc" ? feedback || progress : progress || feedback;
   return result || String(left.card_id).localeCompare(String(right.card_id));
 }
 
@@ -206,13 +226,19 @@ function renderBoard() {
     (state.boardFilters.scope === "all" || card.scope === state.boardFilters.scope) &&
     (state.boardFilters.health === "all" || card.health === state.boardFilters.health));
   $("#flow-board").innerHTML = columns.map((column) => {
-    const values = filtered.filter((card) => card.stage === column.id).sort(compareBoardCards);
+    const values = filtered.filter((card) => card.stage === column.id)
+      .sort(column.id === "validation_active" ? compareValidationCards : compareBoardCards);
     const capacity = column.wip_limit === null ? `${column.count} 项` : `${column.count}/${column.wip_limit}`;
+    const validationSort = column.id === "validation_active" ? `<label class="validation-column-sort">列内排序<select id="validation-sort"><option value="progress_desc" ${state.validationSort === "progress_desc" ? "selected" : ""}>进度比例</option><option value="feedback_desc" ${state.validationSort === "feedback_desc" ? "selected" : ""}>反馈总数</option></select></label>` : "";
     return `<section class="board-column ${column.wip_limit !== null && column.count > column.wip_limit ? "is-over" : ""}" aria-labelledby="column-${column.id}">
-      <header class="column-head"><h2 id="column-${column.id}">${escapeHtml(column.label)}</h2><b>${capacity}</b><small>最老 ${column.oldest_age_days || 0} 天${values.length !== column.count ? ` · 显示 ${values.length}` : ""}</small></header>
+      <header class="column-head"><h2 id="column-${column.id}">${escapeHtml(column.label)}</h2><b>${capacity}</b><small>最老 ${column.oldest_age_days || 0} 天${values.length !== column.count ? ` · 显示 ${values.length}` : ""}</small>${validationSort}</header>
       <div class="column-cards">${values.length ? values.map(boardCard).join("") : '<div class="column-empty">当前无事项</div>'}</div>
     </section>`;
   }).join("");
+  $("#validation-sort")?.addEventListener("change", (event) => {
+    state.validationSort = event.currentTarget.value;
+    renderBoard();
+  });
   $$('[data-board-card]').forEach((button) => button.addEventListener("click", () => openBoardCard(button.dataset.boardCard)));
 }
 
@@ -221,19 +247,48 @@ function openBoardCard(cardId) {
   if (!card) return;
   const missing = card.acceptance?.missing || [];
   const evidence = card.evidence_summary;
+  const guidance = card.validation_guidance;
   const timeline = (card.timeline || []).map((event) => {
     const label = event.type || `${event.phase || "run"} · ${event.status || "recorded"}`;
     return `<li><span>${escapeHtml(label)} · ${formatDate(event.occurred_at)}</span></li>`;
   }).join("");
   const criteriaForm = card.entity_type === "validation" && card.stage === "closeout" ? `<form class="validation-closeout" id="validation-closeout"><p class="overline">HUMAN CLOSEOUT GATE</p><h3>逐条复核成功标准</h3>${(card.success_criteria || []).map((criterion, index) => `<label><span>${index + 1}. ${escapeHtml(criterion)}</span><select name="criterion-${index}" required><option value="">选择判断</option><option value="met">满足</option><option value="not_met">未满足</option><option value="unknown">证据不足</option></select></label>`).join("")}<div class="validation-adjust"><label><span>合格任务目标</span><input id="validation-target" type="number" min="1" value="${card.progress?.target || 1}"></label><label><span>最长观察天数</span><input id="validation-days" type="number" min="1" value="${card.max_validation_days || 30}"></label></div><label><span>判断依据</span><textarea id="validation-reason" minlength="3" required placeholder="引用证据摘要，说明为什么固化、调整、结束或继续。"></textarea></label><div class="detail-actions"><button type="button" class="button ghost" data-validation-action="continue">继续观察</button><button type="button" class="button ghost" data-validation-action="adjust">调整合同</button><button type="button" class="button danger" data-validation-action="failed">结束为失败</button><button type="button" class="button ghost" data-validation-action="inconclusive">结束为未定</button><button type="button" class="button primary" data-validation-action="proven">确认固化</button></div><p class="form-status" id="validation-status"></p></form>` : "";
+  const validationInsight = guidance ? renderValidationInsight(guidance, evidence) : "";
   $("#board-detail").innerHTML = `<div class="board-detail-head"><div><p class="overline">${escapeHtml(card.entity_type)} · ${escapeHtml(card.card_id)}</p><h2>${escapeHtml(card.title)}</h2><p>${escapeHtml(card.next_action)}</p></div><i class="status-pill">${escapeHtml(card.stage)}</i></div>
     <div class="board-detail-grid"><section><h3>验收状态</h3><p>${escapeHtml(card.acceptance?.status || "—")}</p><p>${missing.length ? `仍缺：${missing.map(humanizeGap).join("、")}` : "没有未满足的显式缺口。"}</p></section>
     <section><h3>时间与健康度</h3><p>当前阶段 ${card.age_days ?? 0} 天 · ${card.health === "attention" ? "需要关注" : "节奏正常"}</p></section>
     <section><h3>关系链</h3><ul>${(card.related_ids || []).map((id) => `<li>${escapeHtml(id)}</li>`).join("") || "<li>暂无</li>"}</ul></section>
-    <section><h3>证据摘要</h3><p>${evidence ? `合格 ${evidence.eligible} · 正向 ${evidence.positive} · 负向 ${evidence.negative} · 未定 ${evidence.inconclusive}` : "该阶段尚未进入验证采样。"}</p></section></div>
-    <p class="overline">TRACEABLE TIMELINE</p><ol class="board-timeline">${timeline || ((card.source_dream_ids || []).map((id) => `<li><span>来源梦境 ${escapeHtml(id)}</span></li>`).join("") || "<li><span>历史阶段未知；没有伪造事件。</span></li>")}<li><span>当前实体 ${escapeHtml(card.card_id)} 位于「${escapeHtml(card.stage)}」</span></li></ol>${criteriaForm}`;
+    <section><h3>证据摘要</h3><p>${evidence ? `反馈 ${evidence.observed || 0} · 合格 ${evidence.eligible} · 合规 ${evidence.compliant} · 正向 ${evidence.positive} · 负向 ${evidence.negative} · 混合/未定 ${(evidence.mixed || 0) + (evidence.inconclusive || 0) + (evidence.unclassified || 0)}` : "该阶段尚未进入验证采样。"}</p></section></div>
+    ${validationInsight}<p class="overline">TRACEABLE TIMELINE</p><ol class="board-timeline">${timeline || ((card.source_dream_ids || []).map((id) => `<li><span>来源梦境 ${escapeHtml(id)}</span></li>`).join("") || "<li><span>历史阶段未知；没有伪造事件。</span></li>")}<li><span>当前实体 ${escapeHtml(card.card_id)} 位于「${escapeHtml(card.stage)}」</span></li></ol>${criteriaForm}`;
   $$('[data-validation-action]').forEach((button) => button.addEventListener("click", () => submitValidation(card, button.dataset.validationAction)));
   $("#board-dialog").showModal();
+}
+
+function asTextList(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  return value === null || value === undefined || value === "" ? [] : [String(value)];
+}
+
+function renderValidationInsight(guidance, evidence) {
+  const contract = guidance.contract || {};
+  const factors = [
+    ["适用条件", contract.applies_when],
+    ["预期行为", contract.expected_behavior],
+    ["可观察信号", contract.observable_signals],
+    ["成功标准", contract.success_criteria],
+    ["失败信号", contract.failure_signals],
+  ];
+  const factorHtml = factors.map(([label, values]) => {
+    const items = asTextList(values);
+    return `<div><b>${label}</b>${items.length ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>尚未定义</p>"}</div>`;
+  }).join("");
+  const blockers = (guidance.blockers || []).map((item) => `<li>${escapeHtml(item.message)}</li>`).join("");
+  return `<section class="validation-insight">
+    <div class="validation-recommendation"><p class="overline">NEXT VALIDATION MOVE</p><h3>接下来建议</h3><p>${escapeHtml(guidance.recommendation)}</p></div>
+    <div class="validation-factors"><h3>哪些事情会影响验收</h3>${factorHtml}</div>
+    <div class="validation-blockers"><h3>当前阻碍</h3><ul>${blockers || "<li>没有检测到显式阻碍；仍需由人复核证据质量。</li>"}</ul></div>
+    <div class="evidence-legend"><h3>证据方向怎么理解</h3><p><b class="legend-positive">正向</b> 合格任务的结果支持成功标准。</p><p><b class="legend-negative">负向</b> 合格任务的结果反对假设或触发失败信号；它是有价值的反证，不应被隐藏。</p><p><b class="legend-uncertain">混合/未定</b> 结果方向不单一或信息不足，不能直接用于固化。</p><p>另外有 ${evidence?.excluded || 0} 次反馈未进入合格样本；它们影响验证设计，但不增加进度。</p></div>
+  </section>`;
 }
 
 async function submitValidation(card, action) {

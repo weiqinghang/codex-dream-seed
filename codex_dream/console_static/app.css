@@ -250,6 +250,8 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
 .column-head h2 { margin: 0; font-size: 12px; }
 .column-head b { font: 700 10px var(--mono); }
 .column-head small { grid-column: 1/-1; color: var(--quiet); font-size: 8px; }
+.validation-column-sort { display: grid; grid-column: 1/-1; grid-template-columns: auto 1fr; align-items: center; gap: 7px; margin-top: 5px; color: var(--quiet); font-size: 8px; font-weight: 700; letter-spacing: .05em; }
+.validation-column-sort select { min-width: 0; padding: 5px 22px 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-size: 9px; }
 .column-cards { display: grid; align-content: start; gap: 8px; }
 .flow-card { display: grid; gap: 9px; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); text-align: left; cursor: pointer; box-shadow: 0 2px 8px rgba(24,32,51,.035); animation: card-enter .25s ease both; }
 .flow-card:hover { border-color: #b8c5ee; transform: translateY(-1px); box-shadow: 0 8px 18px rgba(24,32,51,.08); }
@@ -261,6 +263,11 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
 .flow-card-signals { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; color: var(--quiet); font: 8px var(--mono); }
 .progress-track { height: 4px; overflow: hidden; border-radius: 3px; background: var(--surface-soft); }
 .progress-track i { display: block; height: 100%; background: var(--blue); }
+.evidence-track { display: flex; height: 6px; }
+.evidence-track .evidence-segment { flex: 0 0 auto; }
+.evidence-track .evidence-positive { background: #3d9b73; }
+.evidence-track .evidence-negative { background: #c85f4c; }
+.evidence-track .evidence-uncertain { background: #a4acb9; }
 .progress-p0 { width: 0; } .progress-p1 { width: 10%; } .progress-p2 { width: 20%; }
 .progress-p3 { width: 30%; } .progress-p4 { width: 40%; } .progress-p5 { width: 50%; }
 .progress-p6 { width: 60%; } .progress-p7 { width: 70%; } .progress-p8 { width: 80%; }
@@ -280,6 +287,22 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
 .board-timeline { display: grid; gap: 9px; margin: 12px 0 0; padding: 0; list-style: none; }
 .board-timeline li { display: grid; grid-template-columns: 9px 1fr; gap: 9px; color: var(--muted); font-size: 10px; }
 .board-timeline li::before { content: ""; width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: var(--blue); }
+.validation-insight { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 22px 0; }
+.validation-insight > div { padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.validation-insight h3 { margin: 0 0 9px; font-size: 12px; }
+.validation-insight p, .validation-insight li { color: var(--muted); font-size: 10px; line-height: 1.55; }
+.validation-insight ul { margin: 6px 0 0; padding-left: 17px; }
+.validation-recommendation { grid-column: 1/-1; border-color: #cbd6f7 !important; background: #f5f7ff !important; }
+.validation-recommendation p:last-child { margin-bottom: 0; color: var(--ink); font-size: 11px; }
+.validation-factors { grid-column: 1/-1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.validation-factors > h3 { grid-column: 1/-1; }
+.validation-factors b { font-size: 9px; }
+.validation-factors p { margin: 6px 0 0; }
+.evidence-legend p { margin: 7px 0; }
+.evidence-legend b { display: inline-block; min-width: 48px; }
+.legend-positive { color: #287b59; }
+.legend-negative { color: #a84435; }
+.legend-uncertain { color: #707987; }
 .policy-form { width: min(620px, 100%); }
 .policy-form > p:not(.overline) { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .policy-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 20px 0; }
@@ -366,6 +389,10 @@ dialog::backdrop { background: rgba(22, 29, 45, .58); backdrop-filter: blur(4px)
   .board-detail-grid, .policy-fields { grid-template-columns: 1fr; }
   .validation-closeout label { grid-template-columns: 1fr; }
   .validation-adjust { grid-template-columns: 1fr; }
+  .validation-insight { grid-template-columns: 1fr; }
+  .validation-recommendation, .validation-factors { grid-column: auto; }
+  .validation-factors { grid-template-columns: 1fr; }
+  .validation-factors > h3 { grid-column: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
