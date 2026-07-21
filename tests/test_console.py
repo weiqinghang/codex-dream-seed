@@ -8,6 +8,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from codex_dream.console import ConsoleError, ConsoleService, handler_factory
+from codex_dream.database import create_run
 from codex_dream.knowledge import create_knowledge, load_item, record_event
 from codex_dream.workspace import init_workspace
 
@@ -92,6 +93,10 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(improvements["items"][0]["lifecycle"], "deferred")
         self.assertEqual(improvements["items"][0]["deferred_until"], deferred_until)
         self.assertEqual(improvements["attention"], [])
+        board = self.service.board()
+        self.assertEqual(board["counts"]["decision_pending"], 0)
+        self.assertEqual(board["counts"]["deferred"], 1)
+        self.assertEqual(board["cards"][0]["stage"], "deferred")
 
     def test_trial_decision_creates_a_handoff_and_refuses_stale_repeat(self):
         result = self.service.submit_candidate_action(
@@ -190,6 +195,137 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertNotIn("root_user_messages", task)
         self.assertNotIn("project_path", task)
 
+    def test_board_projects_one_open_card_and_wip_count_for_a_candidate(self):
+        board = self.service.board()
+
+        self.assertEqual(board["counts"]["decision_pending"], 1)
+        self.assertEqual(board["columns"][1]["wip_limit"], 5)
+        self.assertEqual(len(board["cards"]), 1)
+        card = board["cards"][0]
+        self.assertEqual(card["card_id"], self.candidate_id)
+        self.assertEqual(card["entity_type"], "candidate")
+        self.assertEqual(card["stage"], "decision_pending")
+        self.assertEqual(card["projects"], ["fixture"])
+        self.assertEqual(card["next_action"], "查看证据并决定是否进入试用")
+
+    def test_board_promotes_validation_to_closeout_when_eligible_target_is_met(self):
+        record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "decision_recorded",
+            {
+                "candidate_id": self.candidate_id,
+                "decision": "accepted",
+                "reason": "Synthetic acceptance.",
+                "decision_source": "human:test",
+            },
+        )
+        adoption = record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "adoption_recorded",
+            {
+                "candidate_id": self.candidate_id,
+                "target": "Synthetic target",
+                "status": "applied",
+            },
+        )
+        validation = record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "validation_started",
+            {
+                "adoption_id": adoption["data"]["adoption_id"],
+                "contract": {
+                    "applies_when": ["Synthetic task."],
+                    "expected_behavior": ["Synthetic behavior."],
+                    "observable_signals": ["Synthetic signal."],
+                    "success_criteria": ["One eligible task succeeds."],
+                    "failure_signals": ["Synthetic failure."],
+                    "eligible_sessions_target": 1,
+                    "max_validation_days": 30,
+                },
+            },
+        )
+        record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "validation_evidence_added",
+            {
+                "validation_id": validation["data"]["validation_id"],
+                "review_unit_id": "TASK-0001",
+                "eligibility": "eligible",
+                "invocation": "synthetic",
+                "compliance": "compliant",
+                "outcome": "positive",
+                "summary": "Synthetic evidence passes.",
+            },
+        )
+
+        board = self.service.board()
+
+        self.assertEqual(len(board["cards"]), 1)
+        card = board["cards"][0]
+        self.assertEqual(card["card_id"], validation["data"]["validation_id"])
+        self.assertEqual(card["entity_type"], "validation")
+        self.assertEqual(card["stage"], "closeout")
+        self.assertEqual(card["progress"], {"current": 1, "target": 1, "unit": "eligible_tasks"})
+        self.assertEqual(card["evidence_summary"]["positive"], 1)
+        self.assertIn(
+            "closeout_ready", {advisory["type"] for advisory in board["advisories"]}
+        )
+
+    def test_board_emits_wip_advisory_without_changing_candidate_state(self):
+        for index in range(5):
+            item = create_knowledge(
+                self.workspace / "knowledge",
+                f"WIP pattern {index}",
+                "detour_improvement",
+                "project",
+                "Synthetic summary.",
+            )
+            payload = candidate_payload()
+            payload["title"] = f"WIP candidate {index}"
+            record_event(
+                self.workspace / "knowledge",
+                item["knowledge_id"],
+                "candidate_proposed",
+                payload,
+            )
+
+        board = self.service.board()
+
+        self.assertEqual(board["counts"]["decision_pending"], 6)
+        advisory = next(
+            item for item in board["advisories"] if item["type"] == "wip_exceeded"
+        )
+        self.assertEqual(advisory["stage"], "decision_pending")
+        self.assertEqual(advisory["count"], 6)
+        self.assertEqual(advisory["limit"], 5)
+        item = load_item(self.workspace / "knowledge", self.knowledge_id)
+        self.assertEqual(item["candidates"][0]["status"], "proposed")
+
+    def test_board_includes_active_dream_without_exposing_private_scope_payload(self):
+        run = create_run(
+            self.service.database,
+            "Synthetic active dream",
+            {
+                "user_anchor": {
+                    "status": "none",
+                    "captured_from": "user_response",
+                    "reason": "Synthetic default scope.",
+                }
+            },
+        )
+
+        board = self.service.board()
+
+        dream = next(card for card in board["cards"] if card["card_id"] == run["run_id"])
+        self.assertEqual(dream["stage"], "dreaming")
+        serialized = json.dumps(dream)
+        self.assertNotIn(str(self.workspace), serialized)
+        self.assertNotIn("user_anchor", serialized)
+
     def test_http_api_requires_local_action_token_for_writes(self):
         server = ThreadingHTTPServer(
             ("127.0.0.1", 0), handler_factory(self.service, "synthetic-token")
@@ -200,6 +336,10 @@ class ConsoleServiceTests(unittest.TestCase):
         try:
             connection.request("GET", "/api/overview")
             self.assertEqual(connection.getresponse().status, 200)
+            connection.request("GET", "/api/board")
+            board_response = connection.getresponse()
+            self.assertEqual(board_response.status, 200)
+            self.assertEqual(json.loads(board_response.read())["counts"]["decision_pending"], 1)
             body = json.dumps(
                 {
                     "action": "defer",

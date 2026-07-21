@@ -328,6 +328,31 @@ def list_runs(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     ]
 
 
+def list_run_ids_by_task_refs(
+    path: Path, task_refs: Iterable[str]
+) -> dict[str, list[str]]:
+    """Return Dream lineage for private task references without exposing session IDs."""
+    initialize(path)
+    selected = tuple(sorted({str(value) for value in task_refs if str(value)}))
+    if not selected:
+        return {}
+    placeholders = ",".join("?" for _ in selected)
+    with open_database(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT task_ref, run_id
+            FROM dream_run_tasks
+            WHERE task_ref IN ({placeholders})
+            ORDER BY run_id
+            """,
+            selected,
+        ).fetchall()
+    output: dict[str, list[str]] = {}
+    for row in rows:
+        output.setdefault(str(row["task_ref"]), []).append(str(row["run_id"]))
+    return output
+
+
 def validate_run_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
     """Require an explicit human focus response before a native Dream run starts."""
     if not isinstance(scope, dict):

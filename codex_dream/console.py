@@ -18,6 +18,7 @@ from .database import (
     database_path,
     finish_user_action,
     get_user_action,
+    list_run_ids_by_task_refs,
     list_runs,
     list_user_actions,
     load_review_cards,
@@ -31,6 +32,16 @@ from .workspace import resolve_workspace
 
 CONSOLE_ACTIONS = {"enter_trial", "reject", "defer"}
 NEXT_INSTRUCTION = "继续处理我刚才在 Dream Console 中确认的事项。"
+BOARD_COLUMNS = (
+    {"id": "dreaming", "label": "做梦中", "wip_limit": 2},
+    {"id": "decision_pending", "label": "待决策", "wip_limit": 5},
+    {"id": "handoff_pending", "label": "待接续", "wip_limit": 3},
+    {"id": "trial_active", "label": "试用落实", "wip_limit": 3},
+    {"id": "validation_active", "label": "验证中", "wip_limit": 5},
+    {"id": "closeout", "label": "待收尾", "wip_limit": 3},
+    {"id": "deferred", "label": "已暂缓", "wip_limit": None},
+    {"id": "done", "label": "已结束", "wip_limit": None},
+)
 
 
 class ConsoleError(ValueError):
@@ -81,6 +92,308 @@ class ConsoleService:
     def runs(self) -> list[dict[str, Any]]:
         return list_runs(self.database)
 
+    @staticmethod
+    def _evidence_summary(validation: dict[str, Any]) -> dict[str, int]:
+        evidence = validation.get("evidence", [])
+        eligible = [value for value in evidence if value.get("eligibility") == "eligible"]
+        return {
+            "eligible": len(eligible),
+            "compliant": sum(value.get("compliance") == "compliant" for value in eligible),
+            "positive": sum(value.get("outcome") == "positive" for value in eligible),
+            "negative": sum(value.get("outcome") == "negative" for value in eligible),
+            "inconclusive": sum(
+                value.get("outcome") == "inconclusive" for value in eligible
+            ),
+        }
+
+    @staticmethod
+    def _source_dream_ids(
+        candidate: dict[str, Any], run_ids_by_task_ref: dict[str, list[str]]
+    ) -> list[str]:
+        return sorted(
+            {
+                run_id
+                for task_ref in candidate.get("task_refs", [])
+                for run_id in run_ids_by_task_ref.get(str(task_ref), [])
+            }
+        )
+
+    def _improvement_board_card(
+        self,
+        item: dict[str, Any],
+        candidate: dict[str, Any],
+        actions: list[dict[str, Any]],
+        run_ids_by_task_ref: dict[str, list[str]],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        candidate_id = str(candidate.get("candidate_id"))
+        adoption = next(
+            (
+                value
+                for value in reversed(item.get("adoptions", []))
+                if value.get("candidate_id") == candidate_id
+            ),
+            None,
+        )
+        validation = None
+        if adoption:
+            validation = next(
+                (
+                    value
+                    for value in reversed(item.get("validations", []))
+                    if value.get("adoption_id") == adoption.get("adoption_id")
+                ),
+                None,
+            )
+        handoff = self._candidate_handoff(actions, candidate_id)
+        defer = self._candidate_defer(actions, candidate_id)
+        deferred_until = self._active_defer(defer)
+        stage = "decision_pending"
+        entity_type = "candidate"
+        card_id = candidate_id
+        stage_started_at = candidate.get("proposed_at")
+        next_action = "查看证据并决定是否进入试用"
+        progress = None
+        evidence_summary = {
+            "eligible": 0,
+            "compliant": 0,
+            "positive": 0,
+            "negative": 0,
+            "inconclusive": 0,
+        }
+        acceptance = {"status": "decision_pending", "missing": ["human_decision"]}
+        closeout_ready = False
+        aging = False
+
+        if candidate.get("status") in {"rejected", "superseded"}:
+            stage = "done"
+            next_action = "查看决定记录"
+            acceptance = {"status": "ended", "missing": []}
+        elif validation:
+            entity_type = "validation"
+            card_id = str(validation.get("validation_id"))
+            stage_started_at = validation.get("status_updated_at") or validation.get("started_at")
+            evidence_summary = self._evidence_summary(validation)
+            contract = validation.get("contract") or {}
+            target = self._integer(contract.get("eligible_sessions_target"), 0)
+            progress = {
+                "current": evidence_summary["eligible"],
+                "target": target,
+                "unit": "eligible_tasks",
+            }
+            status = validation.get("status")
+            closeout_ready = bool(
+                status in {"pending", "validating"}
+                and target > 0
+                and evidence_summary["eligible"] >= target
+            )
+            max_days = self._integer(contract.get("max_validation_days"), 0)
+            aging = bool(max_days and self._days_since(stage_started_at) >= max_days)
+            if status == "proven":
+                stage = "done"
+                next_action = "查看完整旅程"
+                acceptance = {"status": "proven", "missing": []}
+            elif status in {"failed", "inconclusive"} or closeout_ready or aging:
+                stage = "closeout"
+                next_action = "确认固化、调整或结束验证"
+                acceptance = {
+                    "status": "review_required",
+                    "missing": ["human_final_decision"],
+                }
+            else:
+                stage = "validation_active"
+                next_action = "继续收集符合条件的验证证据"
+                acceptance = {"status": "collecting_evidence", "missing": []}
+        elif adoption:
+            entity_type = "adoption"
+            card_id = str(adoption.get("adoption_id"))
+            stage_started_at = adoption.get("updated_at") or adoption.get("adopted_at")
+            if adoption.get("status") == "rolled_back":
+                stage = "done"
+                next_action = "查看回滚决定"
+                acceptance = {"status": "ended", "missing": []}
+            else:
+                stage = "trial_active"
+                next_action = "建立验证合同并开始收集证据"
+                acceptance = {"status": "missing_validation", "missing": ["validation"]}
+        elif handoff:
+            entity_type = "action"
+            card_id = str(handoff.get("action_id"))
+            stage_started_at = handoff.get("created_at")
+            if handoff.get("status") == "failed":
+                stage = "closeout"
+                next_action = "查看失败原因并决定重试或结束"
+                acceptance = {"status": "handoff_failed", "missing": ["human_decision"]}
+            elif handoff.get("status") in {"handoff_pending", "claimed"}:
+                stage = "handoff_pending"
+                next_action = (
+                    "等待 Codex 回写执行结果"
+                    if handoff.get("status") == "claimed"
+                    else "回到 Codex 接续已确认的试用"
+                )
+                acceptance = {"status": str(handoff.get("status")), "missing": []}
+            elif handoff.get("status") == "completed":
+                stage = "closeout"
+                next_action = "补齐试用落实与验证记录"
+                acceptance = {"status": "missing_adoption", "missing": ["adoption"]}
+        elif candidate.get("status") == "accepted":
+            stage = "handoff_pending"
+            next_action = "补齐试用落实与验证记录"
+            acceptance = {"status": "missing_handoff", "missing": ["handoff"]}
+        elif deferred_until:
+            stage = "deferred"
+            next_action = f"{deferred_until} 后重新评估"
+            acceptance = {"status": "deferred", "missing": []}
+
+        related_ids = [str(item.get("knowledge_id")), candidate_id]
+        if adoption:
+            related_ids.append(str(adoption.get("adoption_id")))
+        if validation:
+            related_ids.append(str(validation.get("validation_id")))
+        if handoff:
+            related_ids.append(str(handoff.get("action_id")))
+        health = "attention" if stage == "closeout" else "normal"
+        card = {
+            "card_id": card_id,
+            "entity_type": entity_type,
+            "stage": stage,
+            "title": candidate.get("title") or item.get("title") or "未命名改进",
+            "scope": candidate.get("scope") or item.get("scope"),
+            "projects": sorted({str(value) for value in candidate.get("projects", [])}),
+            "age_days": self._age_days(stage_started_at),
+            "health": health,
+            "progress": progress,
+            "evidence_summary": evidence_summary,
+            "acceptance": acceptance,
+            "next_action": next_action,
+            "source_dream_ids": self._source_dream_ids(candidate, run_ids_by_task_ref),
+            "related_ids": related_ids,
+        }
+        return card, {"closeout_ready": closeout_ready, "aging": aging}
+
+    def board(self) -> dict[str, Any]:
+        """Build a privacy-reduced, deterministic flow-board projection."""
+        items = self._items()
+        actions = list_user_actions(self.database, limit=500)
+        candidates = [
+            candidate for item in items for candidate in item.get("candidates", [])
+        ]
+        task_refs = [
+            str(task_ref)
+            for candidate in candidates
+            for task_ref in candidate.get("task_refs", [])
+        ]
+        run_ids_by_task_ref = list_run_ids_by_task_refs(self.database, task_refs)
+        cards: list[dict[str, Any]] = []
+        advisories: list[dict[str, Any]] = []
+
+        for run in self.runs():
+            stage = "dreaming" if run.get("status") == "active" else "done"
+            ended_at = run.get("completed_at") if stage == "done" else None
+            cards.append(
+                {
+                    "card_id": run.get("run_id"),
+                    "entity_type": "dream",
+                    "stage": stage,
+                    "title": run.get("title") or "未命名梦境",
+                    "scope": "dream",
+                    "projects": [],
+                    "age_days": self._age_days(ended_at or run.get("started_at")),
+                    "health": "normal",
+                    "progress": None,
+                    "evidence_summary": None,
+                    "acceptance": {
+                        "status": "completed" if stage == "done" else "in_progress",
+                        "missing": [] if stage == "done" else ["dream_completion"],
+                    },
+                    "next_action": (
+                        "查看梦境结论与后续改进"
+                        if stage == "done"
+                        else "继续完成复盘、持久化与隐私审计"
+                    ),
+                    "source_dream_ids": [str(run.get("run_id"))],
+                    "related_ids": [str(run.get("run_id"))],
+                }
+            )
+
+        for item in items:
+            for candidate in item.get("candidates", []):
+                card, signals = self._improvement_board_card(
+                    item, candidate, actions, run_ids_by_task_ref
+                )
+                cards.append(card)
+                if signals["closeout_ready"]:
+                    advisories.append(
+                        {
+                            "type": "closeout_ready",
+                            "severity": "attention",
+                            "stage": "closeout",
+                            "card_id": card["card_id"],
+                            "message": "验证样本已达到目标，建议现在复核并形成最终决定。",
+                        }
+                    )
+                if signals["aging"]:
+                    advisories.append(
+                        {
+                            "type": "aging",
+                            "severity": "warning",
+                            "stage": "closeout",
+                            "card_id": card["card_id"],
+                            "message": "验证已达到最大观察期限，建议调整或收尾。",
+                        }
+                    )
+
+        counts = {column["id"]: 0 for column in BOARD_COLUMNS}
+        for card in cards:
+            counts[card["stage"]] += 1
+        columns = []
+        for definition in BOARD_COLUMNS:
+            stage = str(definition["id"])
+            stage_cards = [card for card in cards if card["stage"] == stage]
+            limit = definition["wip_limit"]
+            columns.append(
+                {
+                    **definition,
+                    "count": counts[stage],
+                    "oldest_age_days": max(
+                        (
+                            self._integer(card.get("age_days"))
+                            for card in stage_cards
+                            if card.get("age_days") is not None
+                        ),
+                        default=0,
+                    ),
+                }
+            )
+            if limit is not None and counts[stage] > limit:
+                advisories.append(
+                    {
+                        "type": "wip_exceeded",
+                        "severity": "warning",
+                        "stage": stage,
+                        "count": counts[stage],
+                        "limit": limit,
+                        "message": f"{definition['label']} WIP 为 {counts[stage]}/{limit}，建议先收尾或调整已有事项。",
+                    }
+                )
+
+        order = {column["id"]: index for index, column in enumerate(BOARD_COLUMNS)}
+        cards.sort(
+            key=lambda card: (
+                order[card["stage"]],
+                -(card["age_days"] if card["age_days"] is not None else -1),
+                card["card_id"],
+            )
+        )
+        advisory_order = {"closeout_ready": 0, "aging": 1, "wip_exceeded": 2}
+        advisories.sort(key=lambda value: advisory_order.get(value["type"], 99))
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "columns": columns,
+            "cards": cards,
+            "counts": counts,
+            "advisories": advisories,
+        }
+
     def tasks(self, status: str | None = None, query: str = "") -> list[dict[str, Any]]:
         query = query.casefold().strip()
         output = []
@@ -129,6 +442,16 @@ class ConsoleService:
             timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return 0
+        return max((datetime.now(timezone.utc) - timestamp).days, 0)
+
+    @staticmethod
+    def _age_days(value: str | None) -> int | None:
+        if not value:
+            return None
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
         return max((datetime.now(timezone.utc) - timestamp).days, 0)
 
     @staticmethod
@@ -528,6 +851,9 @@ def handler_factory(service: ConsoleService, token: str):
                 return
             if parsed.path == "/api/overview":
                 self._json(service.overview())
+                return
+            if parsed.path == "/api/board":
+                self._json(service.board())
                 return
             if parsed.path == "/api/runs":
                 self._json({"runs": service.runs()})
