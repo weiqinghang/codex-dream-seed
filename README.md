@@ -338,11 +338,24 @@ codex-dream run-complete DREAM-0003 \
 codex-dream-console
 ```
 
-`develop` 的 0.4.0 线目前提供 Console 功能原型，尚未完成与 `user_anchor` 的展示对齐和
-最终体验验收。默认打开 `http://127.0.0.1:8765`。Console 是 Codex 的轻量复盘伴侣，只提供首页注意力
-窗口、梦境时间线、改进追踪和知识库。它不调用模型、不做语义判断，也不修改目标项目。
+`develop` 的 0.4.0 线提供经过端到端验收的 Console Flow Board。默认打开
+`http://127.0.0.1:8765`。Console 是 Codex 的轻量复盘伴侣，提供首页注意力窗口、推进泳道、
+WIP/老化/收尾建议、梦境时间线、改进追踪和知识库。它不调用模型、不做语义判断，也不修改目标项目。
 首页最多展示 5 项，但完整候选池仍保留在“改进追踪”中；排序同时考虑近期触发和长期
 累积负担。
+
+推进看板按 Dream、Candidate、Adoption、Validation 的现有事实源去重，每列显示 WIP、当前
+Workspace 上限与最老年龄。用户可以按项目、范围和健康度筛选。WIP 策略保存在 Workspace
+本地；超限进入试用不会被静默禁止，但必须留下覆盖理由。Validation 达标或到期后进入“待收尾”，
+用户逐条复核成功标准，再选择继续、调整合同、确认固化或结束。所有写入都需要页面启动时生成的
+本地 token、人工理由和 `ACT-*` 审计记录。
+
+Dream 运行失败时可保留历史并恢复：
+
+```bash
+codex-dream run-fail DREAM-0001 --error "依赖暂时不可用"
+codex-dream run-resume DREAM-0001 --reason "依赖已经恢复"
+```
 
 用户可暂缓、拒绝候选，或在确认作用范围、预期固化载体、观察期限和成功标准后制定试用
 计划。计划确认后只会进入 `等待 Codex 接续`，不会被伪装成已经开始实验。页面会明确提示

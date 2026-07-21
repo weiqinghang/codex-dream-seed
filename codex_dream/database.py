@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 
 DATABASE_NAME = "dream.sqlite3"
-DATABASE_SCHEMA_VERSION = 1
+DATABASE_SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS dream_runs (
     origin TEXT NOT NULL DEFAULT 'native'
 );
 CREATE INDEX IF NOT EXISTS dream_runs_started_idx ON dream_runs(started_at);
+
+CREATE TABLE IF NOT EXISTS dream_run_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES dream_runs(run_id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS dream_run_events_run_idx ON dream_run_events(run_id, event_id);
+
+CREATE TABLE IF NOT EXISTS console_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS dream_run_tasks (
     run_id TEXT NOT NULL REFERENCES dream_runs(run_id) ON DELETE CASCADE,
@@ -138,6 +154,51 @@ def initialize(path: Path) -> None:
             "INSERT OR REPLACE INTO meta(key, value) VALUES('database_schema', ?)",
             (str(DATABASE_SCHEMA_VERSION),),
         )
+
+
+def get_console_setting(path: Path, key: str, default: Any = None) -> Any:
+    initialize(path)
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT value_json FROM console_settings WHERE key=?", (key,)
+        ).fetchone()
+    return json.loads(row["value_json"]) if row else default
+
+
+def set_console_setting(path: Path, key: str, value: Any) -> None:
+    initialize(path)
+    with open_database(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO console_settings(key, value_json, updated_at) VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+            """,
+            (key, json.dumps(value, ensure_ascii=False, sort_keys=True), _now()),
+        )
+
+
+def append_run_event(
+    path: Path, run_id: str, phase: str, status: str, details: dict[str, Any] | None = None
+) -> None:
+    initialize(path)
+    with open_database(path) as connection:
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, ?, ?, ?, ?)",
+            (run_id, phase, status, _now(), json.dumps(details or {}, ensure_ascii=False, sort_keys=True)),
+        )
+
+
+def list_run_events(path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
+    initialize(path)
+    sql = "SELECT * FROM dream_run_events"
+    params: tuple[Any, ...] = ()
+    if run_id:
+        sql += " WHERE run_id=?"
+        params = (run_id,)
+    sql += " ORDER BY event_id"
+    with open_database(path) as connection:
+        rows = connection.execute(sql, params).fetchall()
+    return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
 
 
 def load_sessions(path: Path) -> dict[str, dict[str, Any]]:
@@ -503,6 +564,10 @@ def create_run(
             """,
             (run_id, started_at, title, json.dumps(scope, ensure_ascii=False, sort_keys=True)),
         )
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'scope', 'completed', ?, '{}')",
+            (run_id, started_at),
+        )
     return {"run_id": run_id, "status": "active", "started_at": started_at, "title": title}
 
 
@@ -531,6 +596,10 @@ def link_run_tasks(path: Path, run_id: str, task_refs: Iterable[str]) -> int:
                 (run_id, row["review_unit_id"], task_ref),
             )
             linked += max(cursor.rowcount, 0)
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'review', 'active', ?, ?)",
+            (run_id, _now(), json.dumps({"linked_tasks": linked}, sort_keys=True)),
+        )
     return linked
 
 
@@ -577,7 +646,51 @@ def complete_run(
             "UPDATE dream_run_tasks SET status='reviewed' WHERE run_id=?",
             (run_id,),
         )
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'closeout', 'completed', ?, '{}')",
+            (run_id, completed_at),
+        )
     return {"run_id": run_id, "status": "completed", "completed_at": completed_at}
+
+
+def fail_run(path: Path, run_id: str, error: str) -> dict[str, Any]:
+    initialize(path)
+    reason = error.strip()
+    if not reason:
+        raise ValueError("run failure reason is required")
+    occurred_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute("SELECT status FROM dream_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"unknown dream run: {run_id}")
+        if row["status"] != "active":
+            raise ValueError("only an active dream run can fail")
+        connection.execute("UPDATE dream_runs SET status='failed' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'run', 'failed', ?, ?)",
+            (run_id, occurred_at, json.dumps({"error": reason}, ensure_ascii=False, sort_keys=True)),
+        )
+    return {"run_id": run_id, "status": "failed", "failed_at": occurred_at}
+
+
+def resume_run(path: Path, run_id: str, reason: str) -> dict[str, Any]:
+    initialize(path)
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("run resume reason is required")
+    occurred_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute("SELECT status FROM dream_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"unknown dream run: {run_id}")
+        if row["status"] != "failed":
+            raise ValueError("only a failed dream run can resume")
+        connection.execute("UPDATE dream_runs SET status='active' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'recovery', 'active', ?, ?)",
+            (run_id, occurred_at, json.dumps({"reason": reason}, ensure_ascii=False, sort_keys=True)),
+        )
+    return {"run_id": run_id, "status": "active", "resumed_at": occurred_at}
 
 
 def begin_user_action(

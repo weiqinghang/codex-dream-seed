@@ -154,6 +154,12 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help="JSON object including the required user_anchor_result",
     )
+    run_fail = subcommands.add_parser("run-fail", help="Record a failed Dream cycle without losing its history")
+    run_fail.add_argument("run_id")
+    run_fail.add_argument("--error", required=True)
+    run_resume = subcommands.add_parser("run-resume", help="Resume a failed Dream cycle")
+    run_resume.add_argument("run_id")
+    run_resume.add_argument("--reason", required=True)
 
     handoff_list = subcommands.add_parser(
         "handoff-list", help="List Console decisions waiting for Codex"
@@ -386,8 +392,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(str(error)) from error
         return 0
 
-    if args.command in {"run-start", "run-link", "run-complete"}:
-        from .database import complete_run, create_run, link_run_tasks
+    if args.command in {"run-start", "run-link", "run-complete", "run-fail", "run-resume"}:
+        from .database import complete_run, create_run, fail_run, link_run_tasks, resume_run
 
         try:
             if args.command == "run-start":
@@ -402,7 +408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "linked": link_run_tasks(ledger_path, args.run_id, args.task_ref),
                     }
                 )
-            else:
+            elif args.command == "run-complete":
                 summary = json.loads(args.summary)
                 if not isinstance(summary, dict):
                     raise ValueError("--summary must be a JSON object")
@@ -412,6 +418,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if reports_root not in report.parents or not report.is_file():
                         raise ValueError("--report must name an existing file below reports/")
                 _print_json(complete_run(ledger_path, args.run_id, args.report, summary))
+            elif args.command == "run-fail":
+                _print_json(fail_run(ledger_path, args.run_id, args.error))
+            else:
+                _print_json(resume_run(ledger_path, args.run_id, args.reason))
         except (ValueError, json.JSONDecodeError) as error:
             raise SystemExit(str(error)) from error
         return 0

@@ -5,6 +5,8 @@ const state = {
   knowledge: [],
   improvements: {items: [], attention: [], counts: {}},
   handoffs: [],
+  board: {columns: [], cards: [], advisories: [], counts: {}},
+  boardFilters: {project: "all", scope: "all", health: "all"},
   filter: "all",
   selected: null,
 };
@@ -31,6 +33,7 @@ async function api(path, options = {}) {
 
 const viewCopy = {
   home: ["TODAY", "今天需要你关注什么", "这里只放最关键的事项。决定以后，回到 Codex 继续真正的工作。"],
+  board: ["COMMITMENT FLOW", "每一个梦境，现在走到哪里", "按泳道控制在制品、发现滞留，并优先关闭已经具备验收条件的事项。"],
   runs: ["DREAM HISTORY", "每一次梦境，都有清晰边界", "查看周期范围、完成状态和已经形成的报告。"],
   improvements: ["IMPROVEMENT TRACKING", "掌握每一项改进的旅程", "先看全局状态，再进入单项细节；候选池不会被 Top 5 截断。"],
   knowledge: ["KNOWLEDGE BASE", "已经沉淀了什么", "检查知识、载体、采用和验证是否真正落实。"],
@@ -126,6 +129,123 @@ function renderRuns() {
       <div><time>${formatDate(run.started_at)}</time><h2>${escapeHtml(run.title)}</h2><p>${run.report_path ? `报告已保存 · ${escapeHtml(run.report_path)}` : "这一轮尚未形成周期报告"}</p></div>
       <span class="status-pill">${escapeHtml(run.status)}</span>
     </article>`).join("") : '<div class="empty-state">还没有记录完整的梦境周期。</div>';
+}
+
+function boardCard(card) {
+  const missing = card.acceptance?.missing || [];
+  const progress = card.progress;
+  const percentage = progress?.target ? Math.min(100, Math.round(progress.current / progress.target * 100)) : 0;
+  const tags = [...(card.projects || []).slice(0, 1), card.scope].filter(Boolean);
+  const progressClass = `progress-p${Math.round(percentage / 10)}`;
+  return `<button type="button" class="flow-card ${card.health === "attention" ? "is-attention" : ""}" data-board-card="${escapeHtml(card.card_id)}">
+    <span class="flow-card-meta"><b>${escapeHtml(card.entity_type)} · ${escapeHtml(card.card_id)}</b><span>${card.age_days ?? 0} 天</span></span>
+    <h3>${escapeHtml(card.title)}</h3>
+    ${tags.length ? `<span class="flow-card-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
+    ${progress ? `<span class="progress-track" aria-label="验证进度 ${progress.current}/${progress.target}"><i class="${progressClass}"></i></span>` : ""}
+    ${progress ? `<span class="flow-card-line"><b>进度</b><span>${progress.current}/${progress.target} 个合格任务</span></span>` : ""}
+    ${missing.length ? `<span class="flow-card-line"><b>缺口</b><span>${missing.map(humanizeGap).join("、")}</span></span>` : ""}
+    <span class="flow-card-line"><b>下一步</b><span>${escapeHtml(card.next_action)}</span></span>
+  </button>`;
+}
+
+function humanizeGap(value) {
+  return ({human_decision: "人工决策", human_final_decision: "最终判断", validation: "验证合同", adoption: "落实记录", handoff: "接续记录", dream_completion: "梦境完成"})[value] || String(value).replaceAll("_", " ");
+}
+
+function renderBoardFilters() {
+  const projects = [...new Set(state.board.cards.flatMap((card) => card.projects || []))].sort();
+  const scopes = [...new Set(state.board.cards.map((card) => card.scope).filter(Boolean))].sort();
+  const setOptions = (selector, values, allLabel, selected) => {
+    const select = $(selector);
+    select.innerHTML = `<option value="all">${allLabel}</option>${values.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}`;
+    select.value = values.includes(selected) ? selected : "all";
+  };
+  setOptions("#board-project-filter", projects, "全部项目", state.boardFilters.project);
+  setOptions("#board-scope-filter", scopes, "全部范围", state.boardFilters.scope);
+  $("#board-health-filter").value = state.boardFilters.health;
+}
+
+function renderBoard() {
+  const {columns = [], cards = [], advisories = []} = state.board;
+  const active = columns.filter((column) => column.wip_limit !== null);
+  const over = active.filter((column) => column.count > column.wip_limit);
+  const closeout = columns.find((column) => column.id === "closeout")?.count || 0;
+  $("#nav-board-count").textContent = advisories.length;
+  $("#board-summary").innerHTML = [
+    [cards.filter((card) => !["done", "deferred"].includes(card.stage)).length, "活跃 WIP", over.length ? "is-warning" : ""],
+    [closeout, "等待收尾", closeout ? "is-warning" : ""],
+    [over.length, "超限泳道", over.length ? "is-warning" : ""],
+    [cards.filter((card) => card.health === "attention").length, "需关注卡片", ""],
+  ].map(([value, label, klass]) => `<div class="board-metric ${klass}"><strong>${value}</strong><span>${label}</span></div>`).join("");
+  $("#advisor-list").innerHTML = advisories.length ? advisories.slice(0, 3).map((item) => `<button type="button" class="advisor-item" data-board-card="${escapeHtml(item.card_id || "")}"><i></i><span>${escapeHtml(item.message)}</span><b>${escapeHtml(item.stage || "")}</b></button>`).join("") : '<div class="advisor-empty">当前没有容量或收尾提醒，可以按既定节奏推进。</div>';
+  const filtered = cards.filter((card) =>
+    (state.boardFilters.project === "all" || (card.projects || []).includes(state.boardFilters.project)) &&
+    (state.boardFilters.scope === "all" || card.scope === state.boardFilters.scope) &&
+    (state.boardFilters.health === "all" || card.health === state.boardFilters.health));
+  $("#flow-board").innerHTML = columns.map((column) => {
+    const values = filtered.filter((card) => card.stage === column.id);
+    const limit = column.wip_limit === null ? "∞" : column.wip_limit;
+    return `<section class="board-column ${column.wip_limit !== null && column.count > column.wip_limit ? "is-over" : ""}" aria-labelledby="column-${column.id}">
+      <header class="column-head"><h2 id="column-${column.id}">${escapeHtml(column.label)}</h2><b>${column.count}/${limit}</b><small>最老 ${column.oldest_age_days || 0} 天${values.length !== column.count ? ` · 显示 ${values.length}` : ""}</small></header>
+      <div class="column-cards">${values.length ? values.map(boardCard).join("") : '<div class="column-empty">当前无事项</div>'}</div>
+    </section>`;
+  }).join("");
+  $$('[data-board-card]').forEach((button) => button.addEventListener("click", () => openBoardCard(button.dataset.boardCard)));
+}
+
+function openBoardCard(cardId) {
+  const card = state.board.cards.find((value) => value.card_id === cardId);
+  if (!card) return;
+  const missing = card.acceptance?.missing || [];
+  const evidence = card.evidence_summary;
+  const timeline = (card.timeline || []).map((event) => {
+    const label = event.type || `${event.phase || "run"} · ${event.status || "recorded"}`;
+    return `<li><span>${escapeHtml(label)} · ${formatDate(event.occurred_at)}</span></li>`;
+  }).join("");
+  const criteriaForm = card.entity_type === "validation" && card.stage === "closeout" ? `<form class="validation-closeout" id="validation-closeout"><p class="overline">HUMAN CLOSEOUT GATE</p><h3>逐条复核成功标准</h3>${(card.success_criteria || []).map((criterion, index) => `<label><span>${index + 1}. ${escapeHtml(criterion)}</span><select name="criterion-${index}" required><option value="">选择判断</option><option value="met">满足</option><option value="not_met">未满足</option><option value="unknown">证据不足</option></select></label>`).join("")}<div class="validation-adjust"><label><span>合格任务目标</span><input id="validation-target" type="number" min="1" value="${card.progress?.target || 1}"></label><label><span>最长观察天数</span><input id="validation-days" type="number" min="1" value="${card.max_validation_days || 30}"></label></div><label><span>判断依据</span><textarea id="validation-reason" minlength="3" required placeholder="引用证据摘要，说明为什么固化、调整、结束或继续。"></textarea></label><div class="detail-actions"><button type="button" class="button ghost" data-validation-action="continue">继续观察</button><button type="button" class="button ghost" data-validation-action="adjust">调整合同</button><button type="button" class="button danger" data-validation-action="failed">结束为失败</button><button type="button" class="button ghost" data-validation-action="inconclusive">结束为未定</button><button type="button" class="button primary" data-validation-action="proven">确认固化</button></div><p class="form-status" id="validation-status"></p></form>` : "";
+  $("#board-detail").innerHTML = `<div class="board-detail-head"><div><p class="overline">${escapeHtml(card.entity_type)} · ${escapeHtml(card.card_id)}</p><h2>${escapeHtml(card.title)}</h2><p>${escapeHtml(card.next_action)}</p></div><i class="status-pill">${escapeHtml(card.stage)}</i></div>
+    <div class="board-detail-grid"><section><h3>验收状态</h3><p>${escapeHtml(card.acceptance?.status || "—")}</p><p>${missing.length ? `仍缺：${missing.map(humanizeGap).join("、")}` : "没有未满足的显式缺口。"}</p></section>
+    <section><h3>时间与健康度</h3><p>当前阶段 ${card.age_days ?? 0} 天 · ${card.health === "attention" ? "需要关注" : "节奏正常"}</p></section>
+    <section><h3>关系链</h3><ul>${(card.related_ids || []).map((id) => `<li>${escapeHtml(id)}</li>`).join("") || "<li>暂无</li>"}</ul></section>
+    <section><h3>证据摘要</h3><p>${evidence ? `合格 ${evidence.eligible} · 正向 ${evidence.positive} · 负向 ${evidence.negative} · 未定 ${evidence.inconclusive}` : "该阶段尚未进入验证采样。"}</p></section></div>
+    <p class="overline">TRACEABLE TIMELINE</p><ol class="board-timeline">${timeline || ((card.source_dream_ids || []).map((id) => `<li><span>来源梦境 ${escapeHtml(id)}</span></li>`).join("") || "<li><span>历史阶段未知；没有伪造事件。</span></li>")}<li><span>当前实体 ${escapeHtml(card.card_id)} 位于「${escapeHtml(card.stage)}」</span></li></ol>${criteriaForm}`;
+  $$('[data-validation-action]').forEach((button) => button.addEventListener("click", () => submitValidation(card, button.dataset.validationAction)));
+  $("#board-dialog").showModal();
+}
+
+async function submitValidation(card, action) {
+  const reason = $("#validation-reason").value.trim();
+  const selects = [...$("#validation-closeout").querySelectorAll("select")];
+  const assessments = selects.map((select) => select.value);
+  if (reason.length < 3) { $("#validation-status").textContent = "请留下至少 3 个字的判断依据。"; return; }
+  if (!["continue", "adjust"].includes(action) && assessments.some((value) => !value)) { $("#validation-status").textContent = "形成最终结论前，请逐条判断成功标准。"; return; }
+  $("#validation-status").textContent = "正在保存人工复核记录…";
+  try {
+    await api("/api/validation-actions", {method: "POST", headers: {"X-Dream-Token": state.token}, body: JSON.stringify({knowledge_id: card.knowledge_id, validation_id: card.card_id, action, reason, assessments: ["continue", "adjust"].includes(action) ? [] : assessments, eligible_sessions_target: Number($("#validation-target").value), max_validation_days: Number($("#validation-days").value)})});
+    await loadData();
+    $("#board-dialog").close();
+    showToast(action === "proven" ? "验证已确认固化。" : action === "continue" ? "已记录继续观察决定。" : action === "adjust" ? "验证合同已调整并保留旧版本。" : "验证结论已记录。");
+  } catch (error) { $("#validation-status").textContent = error.message; }
+}
+
+function openPolicy() {
+  $("#policy-fields").innerHTML = state.board.columns.filter((column) => column.wip_limit !== null).map((column) => `<label>${escapeHtml(column.label)}<input type="number" min="1" max="99" name="${escapeHtml(column.id)}" value="${column.wip_limit}"></label>`).join("");
+  $("#policy-reason").value = "";
+  $("#policy-status").textContent = "";
+  $("#policy-dialog").showModal();
+}
+
+async function submitPolicy(event) {
+  event.preventDefault();
+  const reason = $("#policy-reason").value.trim();
+  if (reason.length < 3) { $("#policy-status").textContent = "请留下至少 3 个字的调整理由。"; return; }
+  const limits = Object.fromEntries([...new FormData(event.currentTarget).entries()].filter(([key]) => key !== "reason").map(([key, value]) => [key, Number(value)]));
+  try {
+    await api("/api/board-policy", {method: "POST", headers: {"X-Dream-Token": state.token}, body: JSON.stringify({limits, reason})});
+    await loadData();
+    $("#policy-dialog").close();
+    showToast("WIP 策略已保存并留下审计记录。");
+  } catch (error) { $("#policy-status").textContent = error.message; }
 }
 
 const filterLabels = {
@@ -268,6 +388,10 @@ function startDecision(action) {
     $("#trial-success").value = item.validation_plan || "";
     $("#trial-reason").value = "";
     $("#criteria-confirmed").checked = false;
+    const handoff = state.board.columns.find((column) => column.id === "handoff_pending");
+    const atCapacity = handoff && handoff.count >= handoff.wip_limit;
+    $("#wip-override-field").classList.toggle("is-hidden", !atCapacity);
+    $("#wip-override-reason").value = "";
     window.setTimeout(() => $("#trial-proposal").focus(), 50);
   } else {
     $("#decision-reason").placeholder = action === "reject" ? "为什么不采纳？" : "为什么现在暂不处理？";
@@ -318,6 +442,13 @@ async function submitDecision(event) {
       failure_signals: [],
       criteria_confirmed: true,
     };
+    if (!$("#wip-override-field").classList.contains("is-hidden")) {
+      payload.wip_override_reason = $("#wip-override-reason").value.trim();
+      if (payload.wip_override_reason.length < 3) {
+        $("#form-status").textContent = "待接续泳道已满，请说明为什么仍要开启新事项。";
+        return;
+      }
+    }
   }
   const submit = $("#decision-submit");
   submit.disabled = true;
@@ -344,18 +475,21 @@ async function submitDecision(event) {
 }
 
 async function loadData() {
-  const [overview, runs, knowledge, improvements, handoffs] = await Promise.all([
-    api("/api/overview"), api("/api/runs"), api("/api/knowledge"), api("/api/improvements"), api("/api/handoffs"),
+  const [overview, runs, knowledge, improvements, handoffs, board] = await Promise.all([
+    api("/api/overview"), api("/api/runs"), api("/api/knowledge"), api("/api/improvements"), api("/api/handoffs"), api("/api/board"),
   ]);
   state.overview = overview;
   state.runs = runs.runs;
   state.knowledge = knowledge.items;
   state.improvements = improvements;
   state.handoffs = handoffs.handoffs;
+  state.board = board;
   renderHome();
   renderRuns();
   renderImprovements();
   renderKnowledge();
+  renderBoardFilters();
+  renderBoard();
 }
 
 async function boot() {
@@ -383,6 +517,14 @@ $("#copy-result").addEventListener("click", (event) => copyInstruction(event.cur
 $("#improvement-dialog").addEventListener("click", (event) => {
   if (event.target === $("#improvement-dialog")) closeDialog();
 });
+[$("#board-project-filter"), $("#board-scope-filter"), $("#board-health-filter")].forEach((select) => select.addEventListener("change", () => {
+  state.boardFilters = {project: $("#board-project-filter").value, scope: $("#board-scope-filter").value, health: $("#board-health-filter").value};
+  renderBoard();
+}));
+$("#open-policy").addEventListener("click", openPolicy);
+$$('[data-board-close]').forEach((button) => button.addEventListener("click", () => $("#board-dialog").close()));
+$$('[data-policy-close]').forEach((button) => button.addEventListener("click", () => $("#policy-dialog").close()));
+$("#policy-form").addEventListener("submit", submitPolicy);
 window.addEventListener("hashchange", () => setView((location.hash || "#home").slice(1)));
 
 boot();

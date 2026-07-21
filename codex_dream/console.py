@@ -17,12 +17,15 @@ from .database import (
     begin_user_action,
     database_path,
     finish_user_action,
+    get_console_setting,
     get_user_action,
     list_run_ids_by_task_refs,
     list_runs,
+    list_run_events,
     list_user_actions,
     load_review_cards,
     runtime_counts,
+    set_console_setting,
     transition_user_action,
 )
 from .knowledge import record_event
@@ -62,6 +65,20 @@ class ConsoleService:
             items.append(json.loads(path.read_text(encoding="utf-8")))
         return items
 
+    def _knowledge_timeline(self, knowledge_id: str) -> list[dict[str, str]]:
+        path = self.knowledge_root / "items" / knowledge_id / "timeline.jsonl"
+        if not path.is_file():
+            return []
+        output = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            event = json.loads(line)
+            output.append({
+                "event_id": str(event.get("event_id", "")),
+                "type": str(event.get("type", "unknown")),
+                "occurred_at": str(event.get("occurred_at", "")),
+            })
+        return output
+
     def overview(self) -> dict[str, Any]:
         items = self._items()
         runtime = runtime_counts(self.database)
@@ -91,6 +108,88 @@ class ConsoleService:
 
     def runs(self) -> list[dict[str, Any]]:
         return list_runs(self.database)
+
+    def board_policy(self) -> dict[str, int | None]:
+        defaults = {str(value["id"]): value["wip_limit"] for value in BOARD_COLUMNS}
+        saved = get_console_setting(self.database, "board_policy", {})
+        if isinstance(saved, dict):
+            for key, value in saved.items():
+                if key in defaults and defaults[key] is not None and isinstance(value, int) and 1 <= value <= 99:
+                    defaults[key] = value
+        return defaults
+
+    def update_board_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        reason = str(payload.get("reason", "")).strip()
+        limits = payload.get("limits")
+        if len(reason) < 3:
+            raise ConsoleError("reason must contain at least 3 characters")
+        if not isinstance(limits, dict):
+            raise ConsoleError("limits must be an object")
+        defaults = self.board_policy()
+        mutable = {key for key, value in defaults.items() if value is not None}
+        if set(limits) != mutable:
+            raise ConsoleError("limits must include every active WIP stage")
+        normalized = {}
+        for key, value in limits.items():
+            if not isinstance(value, int) or not 1 <= value <= 99:
+                raise ConsoleError(f"invalid WIP limit for {key}")
+            normalized[key] = value
+        action_id = begin_user_action(self.database, "board_policy_changed", "", "", reason, {"before": defaults, "after": normalized})
+        try:
+            set_console_setting(self.database, "board_policy", normalized)
+            finish_user_action(self.database, action_id, "completed")
+        except BaseException as error:
+            finish_user_action(self.database, action_id, "failed", str(error))
+            raise
+        return {"action_id": action_id, "limits": self.board_policy()}
+
+    def submit_validation_action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        knowledge_id = str(payload.get("knowledge_id", ""))
+        validation_id = str(payload.get("validation_id", ""))
+        action = str(payload.get("action", ""))
+        reason = str(payload.get("reason", "")).strip()
+        if action not in {"proven", "failed", "inconclusive", "continue", "adjust"}:
+            raise ConsoleError("unsupported validation action")
+        if not knowledge_id or not validation_id or len(reason) < 3:
+            raise ConsoleError("knowledge_id, validation_id and a traceable reason are required")
+        with self._write_lock:
+            item_path = self.knowledge_root / "items" / knowledge_id / "item.json"
+            if not item_path.is_file():
+                raise ConsoleError(f"unknown knowledge item: {knowledge_id}")
+            item = json.loads(item_path.read_text(encoding="utf-8"))
+            validation = next((value for value in item.get("validations", []) if value.get("validation_id") == validation_id), None)
+            if validation is None:
+                raise ConsoleError(f"unknown validation: {validation_id}")
+            action_id = begin_user_action(self.database, f"validation_{action}", knowledge_id, "", reason, {"validation_id": validation_id, "status_before": validation.get("status")})
+            try:
+                source = f"dream-console:{action_id}"
+                events = []
+                assessments = payload.get("assessments", [])
+                if not isinstance(assessments, list):
+                    raise ConsoleError("assessments must be a list")
+                criteria = (validation.get("contract") or {}).get("success_criteria", [])
+                if action not in {"continue", "adjust"} and len(assessments) != len(criteria):
+                    raise ConsoleError("every success criterion must be assessed before finalization")
+                for index_value, assessment in enumerate(assessments):
+                    events.append(record_event(self.knowledge_root, knowledge_id, "validation_criteria_assessed", {"validation_id": validation_id, "criterion_index": index_value, "assessment": str(assessment), "reason": reason, "decision_source": source}))
+                if action == "adjust":
+                    contract = dict(validation.get("contract") or {})
+                    target = payload.get("eligible_sessions_target")
+                    days = payload.get("max_validation_days")
+                    if not isinstance(target, int) or not isinstance(days, int):
+                        raise ConsoleError("adjustment requires integer target and max days")
+                    contract["eligible_sessions_target"] = target
+                    contract["max_validation_days"] = days
+                    events.append(record_event(self.knowledge_root, knowledge_id, "validation_contract_adjusted", {"validation_id": validation_id, "contract": contract, "reason": reason, "decision_source": source}))
+                    status = "validating"
+                else:
+                    status = "validating" if action == "continue" else action
+                    events.append(record_event(self.knowledge_root, knowledge_id, "validation_status_changed", {"validation_id": validation_id, "status": status, "reason": reason, "decision_source": source}))
+                finish_user_action(self.database, action_id, "completed")
+            except BaseException as error:
+                finish_user_action(self.database, action_id, "failed", str(error))
+                raise
+        return {"action_id": action_id, "validation_id": validation_id, "status": status, "events": events}
 
     @staticmethod
     def _evidence_summary(validation: dict[str, Any]) -> dict[str, int]:
@@ -174,6 +273,8 @@ class ConsoleService:
             stage_started_at = validation.get("status_updated_at") or validation.get("started_at")
             evidence_summary = self._evidence_summary(validation)
             contract = validation.get("contract") or {}
+            success_criteria = [str(value) for value in contract.get("success_criteria", [])]
+            criterion_assessments = validation.get("criterion_assessments", [])
             target = self._integer(contract.get("eligible_sessions_target"), 0)
             progress = {
                 "current": evidence_summary["eligible"],
@@ -267,6 +368,11 @@ class ConsoleService:
             "next_action": next_action,
             "source_dream_ids": self._source_dream_ids(candidate, run_ids_by_task_ref),
             "related_ids": related_ids,
+            "knowledge_id": str(item.get("knowledge_id")),
+            "success_criteria": success_criteria if validation else [],
+            "criterion_assessments": criterion_assessments if validation else [],
+            "max_validation_days": self._integer(contract.get("max_validation_days"), 0) if validation else None,
+            "timeline": self._knowledge_timeline(str(item.get("knowledge_id"))),
         }
         return card, {"closeout_ready": closeout_ready, "aging": aging}
 
@@ -286,8 +392,9 @@ class ConsoleService:
         cards: list[dict[str, Any]] = []
         advisories: list[dict[str, Any]] = []
 
+        run_events = list_run_events(self.database)
         for run in self.runs():
-            stage = "dreaming" if run.get("status") == "active" else "done"
+            stage = "dreaming" if run.get("status") == "active" else ("closeout" if run.get("status") == "failed" else "done")
             ended_at = run.get("completed_at") if stage == "done" else None
             cards.append(
                 {
@@ -312,6 +419,7 @@ class ConsoleService:
                     ),
                     "source_dream_ids": [str(run.get("run_id"))],
                     "related_ids": [str(run.get("run_id"))],
+                    "timeline": [event for event in run_events if event.get("run_id") == run.get("run_id")],
                 }
             )
 
@@ -342,6 +450,7 @@ class ConsoleService:
                         }
                     )
 
+        policy = self.board_policy()
         counts = {column["id"]: 0 for column in BOARD_COLUMNS}
         for card in cards:
             counts[card["stage"]] += 1
@@ -349,10 +458,11 @@ class ConsoleService:
         for definition in BOARD_COLUMNS:
             stage = str(definition["id"])
             stage_cards = [card for card in cards if card["stage"] == stage]
-            limit = definition["wip_limit"]
+            limit = policy[stage]
             columns.append(
                 {
                     **definition,
+                    "wip_limit": limit,
                     "count": counts[stage],
                     "oldest_age_days": max(
                         (
@@ -392,6 +502,7 @@ class ConsoleService:
             "cards": cards,
             "counts": counts,
             "advisories": advisories,
+            "policy": policy,
         }
 
     def tasks(self, status: str | None = None, query: str = "") -> list[dict[str, Any]]:
@@ -733,6 +844,16 @@ class ConsoleService:
                 )
 
             trial_plan = self._validated_trial_plan(payload) if action == "enter_trial" else None
+            wip_override_reason = None
+            if action == "enter_trial":
+                board = self.board()
+                column = next(value for value in board["columns"] if value["id"] == "handoff_pending")
+                if column["count"] >= column["wip_limit"]:
+                    wip_override_reason = str(payload.get("wip_override_reason", "")).strip()
+                    if len(wip_override_reason) < 3:
+                        raise ConsoleError(
+                            f"handoff WIP is {column['count']}/{column['wip_limit']}; wip_override_reason is required"
+                        )
             deferred_until = None
             if action == "defer":
                 deferred_until = str(
@@ -760,6 +881,7 @@ class ConsoleService:
                     "deferred_until": deferred_until,
                     "handoff_kind": "start_trial" if action == "enter_trial" else None,
                     "next_instruction": NEXT_INSTRUCTION if action == "enter_trial" else None,
+                    "wip_override_reason": wip_override_reason,
                 },
             )
             try:
@@ -887,7 +1009,7 @@ def handler_factory(service: ConsoleService, token: str):
             if self.headers.get("X-Dream-Token") != token:
                 self._json({"error": "invalid local action token"}, 403)
                 return
-            if self.path != "/api/candidate-actions":
+            if self.path not in {"/api/candidate-actions", "/api/board-policy", "/api/validation-actions"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -895,7 +1017,12 @@ def handler_factory(service: ConsoleService, token: str):
                 if length <= 0 or length > 65536:
                     raise ConsoleError("invalid request size")
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                self._json(service.submit_candidate_action(payload), 201)
+                if self.path == "/api/board-policy":
+                    self._json(service.update_board_policy(payload), 200)
+                elif self.path == "/api/validation-actions":
+                    self._json(service.submit_validation_action(payload), 201)
+                else:
+                    self._json(service.submit_candidate_action(payload), 201)
             except (ConsoleError, json.JSONDecodeError, UnicodeDecodeError) as error:
                 self._json({"error": str(error)}, 400)
             except Exception:

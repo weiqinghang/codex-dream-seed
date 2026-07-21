@@ -1,6 +1,7 @@
 # Dream Console 推进 Board 与用户旅程（V1）
 
-状态：已确认以 Board 为主视图、单项时间线为详情视图；本文定义数据边界与首轮迭代顺序。
+状态：0.4.0 已实现并完成本地端到端验收。Board 是主推进视图，单项时间线是详情视图；
+owner/blocker overlay 与 intake-vs-closeout 趋势保留为后续增强，不阻塞本版闭环。
 
 ## 1. Outcome
 

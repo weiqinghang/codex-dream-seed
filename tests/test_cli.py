@@ -213,6 +213,13 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(completed["status"], "completed")
 
+    def test_failed_run_can_be_resumed_from_cli(self):
+        _, started = self.run_cli("run-start", "--title", "Recoverable dream", "--scope", '{"user_anchor":{"status":"none","captured_from":"user_response","reason":"Synthetic scope."}}')
+        _, failed = self.run_cli("run-fail", started["run_id"], "--error", "Synthetic dependency failed.")
+        self.assertEqual(failed["status"], "failed")
+        _, resumed = self.run_cli("run-resume", started["run_id"], "--reason", "Dependency recovered.")
+        self.assertEqual(resumed["status"], "active")
+
     def test_codex_can_claim_and_complete_a_console_handoff(self):
         action_id = begin_user_action(
             self.ledger,

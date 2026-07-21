@@ -305,6 +305,36 @@ class ConsoleServiceTests(unittest.TestCase):
         item = load_item(self.workspace / "knowledge", self.knowledge_id)
         self.assertEqual(item["candidates"][0]["status"], "proposed")
 
+    def test_workspace_wip_policy_is_audited_and_requires_override_at_capacity(self):
+        result = self.service.update_board_policy(
+            {"reason": "合成容量测试。", "limits": {"dreaming": 2, "decision_pending": 5, "handoff_pending": 1, "trial_active": 3, "validation_active": 5, "closeout": 3}}
+        )
+        self.assertEqual(result["limits"]["handoff_pending"], 1)
+        self.service.submit_candidate_action({"action": "enter_trial", "knowledge_id": self.knowledge_id, "candidate_id": self.candidate_id, "reason": "先占用一个接续容量。", "trial_plan": self.trial_plan()})
+        item = create_knowledge(self.workspace / "knowledge", "Second synthetic", "reusable_work", "project", "Second candidate.")
+        candidate = record_event(self.workspace / "knowledge", item["knowledge_id"], "candidate_proposed", candidate_payload())
+        with self.assertRaisesRegex(ConsoleError, "wip_override_reason"):
+            self.service.submit_candidate_action({"action": "enter_trial", "knowledge_id": item["knowledge_id"], "candidate_id": candidate["data"]["candidate_id"], "reason": "尝试越过容量。", "trial_plan": self.trial_plan()})
+        accepted = self.service.submit_candidate_action({"action": "enter_trial", "knowledge_id": item["knowledge_id"], "candidate_id": candidate["data"]["candidate_id"], "reason": "紧急合成验证。", "wip_override_reason": "阻塞影响更高，明确覆盖。", "trial_plan": self.trial_plan()})
+        self.assertEqual(accepted["status"], "handoff_pending")
+        self.assertEqual(self.service.actions()[0]["payload"]["wip_override_reason"], "阻塞影响更高，明确覆盖。")
+
+    def test_validation_finalization_requires_each_criterion_assessed(self):
+        record_event(self.workspace / "knowledge", self.knowledge_id, "decision_recorded", {"candidate_id": self.candidate_id, "decision": "accepted", "reason": "Synthetic.", "decision_source": "human:test"})
+        adoption = record_event(self.workspace / "knowledge", self.knowledge_id, "adoption_recorded", {"candidate_id": self.candidate_id, "target": "Synthetic", "status": "applied"})
+        validation = record_event(self.workspace / "knowledge", self.knowledge_id, "validation_started", {"adoption_id": adoption["data"]["adoption_id"], "contract": {"applies_when": ["Synthetic"], "expected_behavior": ["Works"], "observable_signals": ["Observed"], "success_criteria": ["Criterion A", "Criterion B"], "failure_signals": ["Breaks"], "eligible_sessions_target": 1, "max_validation_days": 30}})
+        adjusted = self.service.submit_validation_action({"knowledge_id": self.knowledge_id, "validation_id": validation["data"]["validation_id"], "action": "adjust", "reason": "Need one additional sample.", "assessments": [], "eligible_sessions_target": 2, "max_validation_days": 45})
+        self.assertEqual(adjusted["status"], "validating")
+        with self.assertRaisesRegex(ConsoleError, "every success criterion"):
+            self.service.submit_validation_action({"knowledge_id": self.knowledge_id, "validation_id": validation["data"]["validation_id"], "action": "proven", "reason": "Only one was checked.", "assessments": ["met"]})
+        result = self.service.submit_validation_action({"knowledge_id": self.knowledge_id, "validation_id": validation["data"]["validation_id"], "action": "proven", "reason": "Both criteria have evidence.", "assessments": ["met", "met"]})
+        self.assertEqual(result["status"], "proven")
+        current = load_item(self.workspace / "knowledge", self.knowledge_id)["validations"][0]
+        self.assertEqual(current["status"], "proven")
+        self.assertEqual(len(current["criterion_assessments"]), 2)
+        self.assertEqual(current["contract"]["eligible_sessions_target"], 2)
+        self.assertEqual(len(current["contract_history"]), 1)
+
     def test_board_includes_active_dream_without_exposing_private_scope_payload(self):
         run = create_run(
             self.service.database,
@@ -382,6 +412,11 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(html.count("data-dialog-close"), 2)
         self.assertIn("[data-dialog-close]", javascript)
         self.assertIn('$("#improvement-dialog").close()', javascript)
+        self.assertIn('id="view-board"', html)
+        self.assertIn('aria-label="梦境推进泳道"', html)
+        self.assertIn('id="policy-form"', html)
+        self.assertIn("renderBoard()", javascript)
+        self.assertNotIn("innerHTML = item.", javascript)
 
 
 if __name__ == "__main__":

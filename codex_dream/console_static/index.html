@@ -17,6 +17,7 @@
         </a>
         <nav aria-label="主导航">
           <button class="nav-item is-active" type="button" data-view="home"><i>⌂</i><span>首页</span></button>
+          <button class="nav-item" type="button" data-view="board"><i>▦</i><span>推进看板</span><b id="nav-board-count">0</b></button>
           <button class="nav-item" type="button" data-view="runs"><i>◌</i><span>梦境</span></button>
           <button class="nav-item" type="button" data-view="improvements"><i>↗</i><span>改进追踪</span><b id="nav-attention-count">0</b></button>
           <button class="nav-item" type="button" data-view="knowledge"><i>◇</i><span>知识库</span></button>
@@ -73,6 +74,23 @@
           </div>
         </section>
 
+        <section class="view" id="view-board">
+          <div class="board-summary" id="board-summary"></div>
+          <section class="advisor-panel" aria-labelledby="advisor-title">
+            <div><p class="overline">FLOW ADVISOR</p><h2 id="advisor-title">先收尾，再开新坑</h2></div>
+            <div class="advisor-list" id="advisor-list"></div>
+          </section>
+          <div class="board-toolbar">
+            <div class="board-filters" aria-label="看板筛选">
+              <label>项目<select id="board-project-filter"><option value="all">全部项目</option></select></label>
+              <label>范围<select id="board-scope-filter"><option value="all">全部范围</option></select></label>
+              <label>健康度<select id="board-health-filter"><option value="all">全部状态</option><option value="attention">需关注</option><option value="normal">正常</option></select></label>
+            </div>
+            <button type="button" class="button ghost" id="open-policy">WIP 策略</button>
+          </div>
+          <div class="flow-board" id="flow-board" aria-label="梦境推进泳道"></div>
+        </section>
+
         <section class="view" id="view-runs">
           <div class="timeline" id="runs-list"></div>
         </section>
@@ -121,6 +139,7 @@
             <label>成功标准<textarea id="trial-success" placeholder="每行一条；系统可以建议，但需要你确认"></textarea></label>
             <label class="confirm-row"><input id="criteria-confirmed" type="checkbox"><span>我确认以上成功标准可以用来判断这次实验。</span></label>
             <label>为什么值得尝试<textarea id="trial-reason" minlength="3" placeholder="留下你的决定依据"></textarea></label>
+            <label id="wip-override-field" class="is-hidden">WIP 覆盖理由<textarea id="wip-override-reason" minlength="3" placeholder="当前待接续泳道已满。为什么仍要开启这一项？"></textarea></label>
           </div>
           <div class="dialog-actions">
             <button type="button" class="button ghost" data-cancel-action>返回详情</button>
@@ -137,6 +156,26 @@
           <button type="button" class="button primary" data-dialog-close>完成</button>
         </section>
       </div>
+    </dialog>
+
+    <dialog id="board-dialog">
+      <div class="dialog-shell board-dialog-shell">
+        <button type="button" class="dialog-close" data-board-close aria-label="关闭">×</button>
+        <div id="board-detail"></div>
+      </div>
+    </dialog>
+
+    <dialog id="policy-dialog">
+      <form class="dialog-shell policy-form" id="policy-form">
+        <button type="button" class="dialog-close" data-policy-close aria-label="关闭">×</button>
+        <p class="overline">WORKSPACE POLICY</p>
+        <h2>调整在制品上限</h2>
+        <p>策略只保存在当前 Dream Workspace。达到上限时仍可继续，但必须留下覆盖理由。</p>
+        <div class="policy-fields" id="policy-fields"></div>
+        <label>调整理由<textarea id="policy-reason" required minlength="3" placeholder="为什么现在需要调整容量？"></textarea></label>
+        <div class="dialog-actions"><button type="button" class="button ghost" data-policy-close>取消</button><button class="button primary" type="submit">保存策略</button></div>
+        <p class="form-status" id="policy-status" role="status"></p>
+      </form>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

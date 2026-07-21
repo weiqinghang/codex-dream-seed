@@ -9,6 +9,7 @@ from codex_dream.database import (
     claim_user_action,
     complete_run,
     create_run,
+    fail_run,
     initialize,
     load_review_cards,
     load_sessions,
@@ -18,6 +19,8 @@ from codex_dream.database import (
     get_user_action,
     list_user_actions,
     list_runs,
+    list_run_events,
+    resume_run,
     transition_user_action,
     verify_database,
     write_review_cards,
@@ -116,6 +119,17 @@ class DatabaseTests(unittest.TestCase):
             },
         )
         self.assertEqual(run["status"], "active")
+
+    def test_dream_run_failure_and_recovery_are_traceable(self):
+        run = create_run(
+            self.path,
+            "Recoverable dream",
+            {"user_anchor": {"status": "none", "captured_from": "user_response", "reason": "Synthetic scope."}},
+        )
+        self.assertEqual(fail_run(self.path, run["run_id"], "Synthetic interruption.")["status"], "failed")
+        self.assertEqual(resume_run(self.path, run["run_id"], "Dependency recovered.")["status"], "active")
+        events = list_run_events(self.path, run["run_id"])
+        self.assertEqual([(event["phase"], event["status"]) for event in events], [("scope", "completed"), ("run", "failed"), ("recovery", "active")])
 
     def test_provided_user_anchor_requires_comparable_human_expectations(self):
         with self.assertRaisesRegex(ValueError, "expected_result"):
