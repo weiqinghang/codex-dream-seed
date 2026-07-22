@@ -811,6 +811,80 @@ def claim_user_action(path: Path, action_id: str) -> dict[str, Any]:
     return get_user_action(path, action_id)
 
 
+def retry_user_action(
+    path: Path,
+    action_id: str,
+    reason: str,
+    source: str,
+    request_id: str,
+) -> dict[str, Any]:
+    """Atomically requeue one failed handoff while preserving every attempt."""
+    if len(reason.strip()) < 3:
+        raise ValueError("retry reason must contain at least 3 characters")
+    if not source.strip():
+        raise ValueError("retry source is required")
+    if not request_id.strip():
+        raise ValueError("retry request_id is required")
+    initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
+    retried_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT payload_json, status, error, completed_at FROM user_actions WHERE action_id=?",
+            (numeric_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        payload = json.loads(row["payload_json"])
+        retries = list(payload.get("retry_history") or [])
+        if any(value.get("request_id") == request_id for value in retries):
+            raise ValueError("duplicate retry request")
+        if row["status"] != "failed":
+            raise ValueError(
+                f"user action is {row['status']}; only failed handoffs can be retried"
+            )
+        attempt = int(payload.get("attempt") or 1)
+        attempts = list(payload.get("attempt_history") or [])
+        attempts.append(
+            {
+                "attempt": attempt,
+                "status": "failed",
+                "error": row["error"],
+                "failed_at": row["completed_at"],
+                "claimed_at": payload.get("claimed_at"),
+            }
+        )
+        retry = {
+            "request_id": request_id,
+            "reason": reason.strip(),
+            "source": source.strip(),
+            "retried_at": retried_at,
+            "from_attempt": attempt,
+            "to_attempt": attempt + 1,
+        }
+        retries.append(retry)
+        payload.update(
+            {
+                "attempt": attempt + 1,
+                "attempt_history": attempts,
+                "retry_history": retries,
+                "latest_retry_at": retried_at,
+                "claimed_at": None,
+            }
+        )
+        cursor = connection.execute(
+            """
+            UPDATE user_actions
+            SET status='handoff_pending', error=NULL, payload_json=?, completed_at=NULL
+            WHERE action_id=? AND status='failed'
+            """,
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), numeric_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("handoff retry conflicted with another writer")
+    return get_user_action(path, action_id)
+
+
 def list_user_actions(
     path: Path, limit: int = 50, statuses: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:

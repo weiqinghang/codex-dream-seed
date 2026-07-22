@@ -8,6 +8,11 @@ description: Incrementally review local Codex sessions as task trees, preserve e
 Use the installed `codex-dream` commands as the deterministic data plane. Keep semantic
 judgment in this workflow and mutable data in the user's initialized workspace.
 
+Use [references/operating-handbook.md](references/operating-handbook.md) as the canonical
+user-facing semantics source. Read only the relevant section: sections 1-2 for a first Dream, section 5 for Console
+handoff, section 6 for validation/closeout, and section 7 for recovery. Do not duplicate or
+silently redefine the five board states in this Skill.
+
 If the data-plane command is missing while working from a fresh seed checkout, follow the
 repository `AGENTS.md` and run `python3 scripts/bootstrap.py` before attempting a Dream run.
 On Windows, use `py scripts\bootstrap.py`. After applying the reviewed bootstrap plan, ask
@@ -58,18 +63,20 @@ Dream Console is a deterministic review and decision companion. It does not call
 perform semantic work, edit target projects, or claim that an experiment has started. Codex
 is the only semantic control plane.
 
-When the user asks to continue an item confirmed in Dream Console, or uses the Console's
-suggested instruction, run:
+When the user asks to continue an item confirmed in Dream Console, use the exact `ACT-*`,
+workspace fingerprint, and attempt copied from the Console instruction. Run the checks in
+this order:
 
 ```bash
-codex-dream handoff-list --status handoff_pending
-codex-dream handoff-claim <ACT-*>
+codex-dream doctor
+codex-dream console-context --handoff <ACT-*> --expect-fingerprint <ws-*> --expect-attempt <n>
+codex-dream handoff-claim <ACT-*> --expect-fingerprint <ws-*> --expect-attempt <n>
 ```
 
-If more than one handoff is pending, show their titles, scopes, reminder dates, and success
-criteria, then ask the user which one to continue. Do not expose raw private session content.
-For one unambiguous handoff, restate the already confirmed scope and success criteria briefly,
-then claim it before changing any project or knowledge state.
+Fail closed on any Workspace, state, or attempt mismatch. Never choose a handoff by recency or
+replace the copied instruction with a bare `handoff-list`/`handoff-claim` sequence. Restate the
+specified handoff's confirmed scope and success criteria briefly, then claim it before changing
+any project or knowledge state. Do not expose raw private session content.
 
 Do not ask the user to reconfirm fields already recorded in the handoff unless the target is
 missing, the plan is stale, the requested carrier conflicts with repository policy, or an
@@ -174,6 +181,10 @@ sub-agents as independent repetitions.
 
 After checkpointing, link the reviewed `TASK-*` references with `codex-dream run-link`.
 Complete the cycle with `codex-dream run-complete --report <reports/...> --summary <json>`.
+When the host exposes exact usage counters for the Dream cycle, persist them under
+`summary.run_metrics.token_usage` using `input_tokens`, `cached_input_tokens`,
+`output_tokens`, and `total_tokens`. Omit unavailable fields and never estimate historical
+Token usage. Console derives elapsed time from the tracked start and completion timestamps.
 For a provided anchor, `summary.user_anchor_result` must record the relationship status,
 supporting and counterevidence `TASK-*` references, and any evidence gap. Use one of
 `aligned`, `partially_aligned`, `conflicting`, or `insufficient_evidence`. For a `none` anchor,

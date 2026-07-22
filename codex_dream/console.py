@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
+import signal
+import socket
+import subprocess
+import sys
 import threading
+import time
 import webbrowser
 from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
@@ -12,6 +18,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
 from .database import (
     begin_user_action,
@@ -23,24 +30,24 @@ from .database import (
     list_runs,
     list_user_actions,
     load_review_cards,
+    retry_user_action,
     runtime_counts,
     set_console_setting,
     transition_user_action,
 )
 from .knowledge import record_event
+from .locking import WorkspaceLockError, workspace_write_lock
 from .schema import require_current_workspace
-from .workspace import resolve_workspace
+from .workspace import resolve_workspace, workspace_fingerprint
 
 
 CONSOLE_ACTIONS = {"enter_trial", "reject", "defer"}
-NEXT_INSTRUCTION = "继续处理我刚才在 Dream Console 中确认的事项。"
 BOARD_COLUMNS = (
-    {"id": "decision_pending", "label": "待决策 Inbox", "wip_limit": None},
+    {"id": "decision_pending", "label": "待决策", "wip_limit": None},
     {"id": "trial_active", "label": "试用落实", "wip_limit": 3},
     {"id": "validation_active", "label": "验证中", "wip_limit": 5},
     {"id": "closeout", "label": "待收尾", "wip_limit": 3},
-    {"id": "deferred", "label": "已暂缓", "wip_limit": None},
-    {"id": "done", "label": "已结束", "wip_limit": None},
+    {"id": "done", "label": "完成", "wip_limit": None},
 )
 
 
@@ -49,9 +56,11 @@ class ConsoleError(ValueError):
 
 
 class ConsoleService:
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, workspace_source: str = "argument"):
         self.workspace = Path(workspace).expanduser()
         require_current_workspace(self.workspace)
+        self.workspace_source = workspace_source
+        self.workspace_fingerprint = workspace_fingerprint(self.workspace)
         self.database = database_path(self.workspace)
         self.knowledge_root = self.workspace / "knowledge"
         self._write_lock = threading.Lock()
@@ -100,11 +109,201 @@ class ConsoleService:
                 for validation in validations
             ),
             "maturity": maturity,
-            "recent_runs": list_runs(self.database, limit=4),
+            "recent_runs": self.runs()[:4],
         }
 
     def runs(self) -> list[dict[str, Any]]:
-        return list_runs(self.database)
+        runs = list_runs(self.database)
+        runs.sort(key=lambda value: str(value.get("started_at") or ""), reverse=True)
+        return [self._run_view(value) for value in runs]
+
+    def report(self, run_id: str) -> dict[str, str]:
+        run = next((value for value in self.runs() if value.get("run_id") == run_id), None)
+        if run is None:
+            raise ConsoleError(f"unknown Dream run: {run_id}")
+        relative = run.get("report_path")
+        if not relative:
+            raise ConsoleError("this Dream run has no registered report")
+        reports_root = (self.workspace / "reports").resolve()
+        path = (self.workspace / str(relative)).resolve()
+        if reports_root not in path.parents or not path.is_file():
+            raise ConsoleError("registered report is unavailable or outside the Workspace")
+        return {
+            "run_id": run_id,
+            "title": str(run.get("title") or run_id),
+            "content": path.read_text(encoding="utf-8"),
+        }
+
+    def handoff_instruction(self, action: dict[str, Any]) -> str:
+        action_id = str(action["action_id"])
+        attempt = int(action.get("payload", {}).get("attempt") or 1)
+        fingerprint = self.workspace_fingerprint
+        return (
+            f"请处理 Dream handoff {action_id}。先运行 codex-dream doctor，并确认 Workspace "
+            f"fingerprint 为 {fingerprint}；再运行 codex-dream console-context --handoff "
+            f"{action_id} --expect-fingerprint {fingerprint} --expect-attempt {attempt}，核对范围、"
+            "成功标准、新鲜度与当前状态；确认无误后再执行 "
+            f"codex-dream handoff-claim {action_id} --expect-fingerprint {fingerprint} "
+            f"--expect-attempt {attempt}。不要依赖旧聊天或猜测最近事项。"
+        )
+
+    def console_context(
+        self,
+        handoff_id: str | None = None,
+        card_id: str | None = None,
+    ) -> dict[str, Any]:
+        board = self.board()
+        incomplete = [
+            {"action_id": value["action_id"], "action_type": value["action_type"], "created_at": value["created_at"]}
+            for value in list_user_actions(self.database, limit=100, statuses={"pending"})
+        ]
+        cards = board["cards"]
+        selected_card = next(
+            (
+                card for card in cards
+                if card_id and (card["card_id"] == card_id or card_id in card["related_ids"])
+            ),
+            None,
+        )
+        if card_id and selected_card is None:
+            raise ConsoleError(f"unknown board card: {card_id}")
+        handoff = None
+        snapshot_diff: list[str] = []
+        if handoff_id:
+            try:
+                handoff = get_user_action(self.database, handoff_id)
+            except ValueError as error:
+                raise ConsoleError(str(error)) from error
+            if handoff.get("action_type") != "enter_trial":
+                raise ConsoleError(f"not a Console handoff: {handoff_id}")
+            related = next(
+                (card for card in cards if handoff_id in card.get("related_ids", [])),
+                None,
+            )
+            selected_card = selected_card or related
+            snapshot = handoff.get("payload", {}).get("board_snapshot") or {}
+            if snapshot.get("counts") and snapshot["counts"] != board["counts"]:
+                snapshot_diff.append("board_counts_changed")
+            old_stage = snapshot.get("stage")
+            if old_stage and selected_card and old_stage != selected_card.get("stage"):
+                snapshot_diff.append("card_stage_changed")
+            if snapshot.get("handoff_status") and snapshot["handoff_status"] != handoff.get("status"):
+                snapshot_diff.append("handoff_status_changed")
+            if snapshot.get("attempt") and int(snapshot["attempt"]) != int(handoff.get("payload", {}).get("attempt") or 1):
+                snapshot_diff.append("handoff_attempt_changed")
+        columns = [
+            {"id": value["id"], "label": value["label"], "count": value["count"], "limit": value["wip_limit"]}
+            for value in board["columns"]
+        ]
+        return {
+            "generated_at": board["generated_at"],
+            "workspace": {
+                "fingerprint": self.workspace_fingerprint,
+                "source": self.workspace_source,
+            },
+            "board": {
+                "columns": columns,
+                "wip_exceeded": [
+                    value for value in board["advisories"] if value["type"] == "wip_exceeded"
+                ],
+                "closeout": [
+                    {"card_id": value["card_id"], "title": value["title"], "next_action": value["next_action"]}
+                    for value in cards if value["stage"] == "closeout"
+                ],
+                "advisor": board["advisories"][:5],
+            },
+            "card": (
+                {key: selected_card.get(key) for key in (
+                    "card_id", "title", "stage", "next_action", "success_criteria", "acceptance"
+                )}
+                if selected_card else None
+            ),
+            "handoff": (
+                {
+                    "action_id": handoff["action_id"],
+                    "status": handoff["status"],
+                    "attempt": int(handoff["payload"].get("attempt") or 1),
+                    "scope": (handoff["payload"].get("trial_plan") or {}).get("scope"),
+                    "trial_plan": handoff["payload"].get("trial_plan"),
+                    "error": handoff.get("error"),
+                    "snapshot_diff": snapshot_diff,
+                }
+                if handoff else None
+            ),
+            "possibly_stale": bool(snapshot_diff),
+            "incomplete_transactions": incomplete,
+            "recovery_required": bool(incomplete),
+        }
+
+    def retry_handoff(self, action_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            action = get_user_action(self.database, action_id)
+        except ValueError as error:
+            raise ConsoleError(str(error)) from error
+        if action.get("action_type") != "enter_trial":
+            raise ConsoleError(f"not a Console handoff: {action_id}")
+        try:
+            retried = retry_user_action(
+                self.database,
+                action_id,
+                str(payload.get("reason") or ""),
+                str(payload.get("source") or ""),
+                str(payload.get("request_id") or ""),
+            )
+        except ValueError as error:
+            raise ConsoleError(str(error)) from error
+        retried["next_instruction"] = self.handoff_instruction(retried)
+        return retried
+
+    @staticmethod
+    def _run_view(run: dict[str, Any]) -> dict[str, Any]:
+        """Add honest, display-ready Dream cost metrics without inventing history."""
+        value = dict(run)
+        duration_seconds = None
+        if value.get("origin") != "imported_report" and value.get("completed_at"):
+            try:
+                started = datetime.fromisoformat(
+                    str(value["started_at"]).replace("Z", "+00:00")
+                )
+                completed = datetime.fromisoformat(
+                    str(value["completed_at"]).replace("Z", "+00:00")
+                )
+                duration_seconds = max(int((completed - started).total_seconds()), 0)
+            except (TypeError, ValueError):
+                duration_seconds = None
+
+        summary = value.get("summary") or {}
+        run_metrics = summary.get("run_metrics") if isinstance(summary, dict) else None
+        raw_tokens = (
+            run_metrics.get("token_usage")
+            if isinstance(run_metrics, dict)
+            else None
+        )
+        token_usage = None
+        if isinstance(raw_tokens, dict):
+            normalized = {}
+            for field in (
+                "input_tokens",
+                "cached_input_tokens",
+                "output_tokens",
+                "total_tokens",
+            ):
+                metric = raw_tokens.get(field)
+                if isinstance(metric, int) and metric >= 0:
+                    normalized[field] = metric
+            if "total_tokens" not in normalized and (
+                "input_tokens" in normalized or "output_tokens" in normalized
+            ):
+                normalized["total_tokens"] = normalized.get(
+                    "input_tokens", 0
+                ) + normalized.get("output_tokens", 0)
+            token_usage = normalized or None
+
+        value["run_metrics"] = {
+            "duration_seconds": duration_seconds,
+            "token_usage": token_usage,
+        }
+        return value
 
     def board_policy(self) -> dict[str, int | None]:
         defaults = {str(value["id"]): value["wip_limit"] for value in BOARD_COLUMNS}
@@ -149,7 +348,7 @@ class ConsoleService:
             raise ConsoleError("unsupported validation action")
         if not knowledge_id or not validation_id or len(reason) < 3:
             raise ConsoleError("knowledge_id, validation_id and a traceable reason are required")
-        with self._write_lock:
+        with self._write_lock, workspace_write_lock(self.workspace):
             item_path = self.knowledge_root / "items" / knowledge_id / "item.json"
             if not item_path.is_file():
                 raise ConsoleError(f"unknown knowledge item: {knowledge_id}")
@@ -355,10 +554,28 @@ class ConsoleService:
             }
             validation_guidance = self._validation_guidance(contract, evidence_summary)
             status = validation.get("status")
+            latest_reopen = next(
+                (
+                    value for value in actions
+                    if value.get("action_type") in {"validation_continue", "validation_adjust"}
+                    and value.get("status") == "completed"
+                    and value.get("payload", {}).get("validation_id") == validation.get("validation_id")
+                ),
+                None,
+            )
+            newest_evidence_at = max(
+                (str(value.get("observed_at") or "") for value in validation.get("evidence", [])),
+                default="",
+            )
+            waiting_for_new_evidence = bool(
+                latest_reopen
+                and str(latest_reopen.get("created_at") or "") >= newest_evidence_at
+            )
             closeout_ready = bool(
                 status in {"pending", "validating"}
                 and target > 0
                 and evidence_summary["eligible"] >= target
+                and not waiting_for_new_evidence
             )
             max_days = self._integer(contract.get("max_validation_days"), 0)
             aging = bool(max_days and self._days_since(stage_started_at) >= max_days)
@@ -366,7 +583,11 @@ class ConsoleService:
                 stage = "done"
                 next_action = "查看完整旅程"
                 acceptance = {"status": "proven", "missing": []}
-            elif status in {"failed", "inconclusive"} or closeout_ready or aging:
+            elif status in {"failed", "inconclusive"}:
+                stage = "done"
+                next_action = "查看失败结论" if status == "failed" else "查看证据不足结论"
+                acceptance = {"status": str(status), "missing": []}
+            elif closeout_ready or aging:
                 stage = "closeout"
                 next_action = "确认固化、调整或结束验证"
                 acceptance = {
@@ -375,7 +596,10 @@ class ConsoleService:
                 }
             else:
                 stage = "validation_active"
-                next_action = validation_guidance["recommendation"]
+                next_action = (
+                    "已选择继续观察；记录下一条合格证据后重新评估收尾条件。"
+                    if waiting_for_new_evidence else validation_guidance["recommendation"]
+                )
                 acceptance = {"status": "collecting_evidence", "missing": []}
         elif adoption:
             entity_type = "adoption"
@@ -485,6 +709,8 @@ class ConsoleService:
                 card, signals = self._improvement_board_card(
                     item, candidate, actions, run_ids_by_task_ref
                 )
+                if card["stage"] == "deferred":
+                    continue
                 cards.append(card)
                 if signals["closeout_ready"]:
                     advisories.append(
@@ -596,11 +822,14 @@ class ConsoleService:
 
     def handoffs(self, statuses: set[str] | None = None) -> list[dict[str, Any]]:
         selected = statuses or {"handoff_pending", "claimed", "failed"}
-        return [
+        actions = [
             action
             for action in list_user_actions(self.database, statuses=selected)
             if action["action_type"] == "enter_trial"
         ]
+        for action in actions:
+            action["next_instruction"] = self.handoff_instruction(action)
+        return actions
 
     @staticmethod
     def _days_since(value: str | None) -> int:
@@ -880,7 +1109,7 @@ class ConsoleService:
         if not reason:
             raise ConsoleError("reason is required for a traceable human action")
 
-        with self._write_lock:
+        with self._write_lock, workspace_write_lock(self.workspace):
             item_path = self.knowledge_root / "items" / knowledge_id / "item.json"
             if not item_path.is_file():
                 raise ConsoleError(f"unknown knowledge item: {knowledge_id}")
@@ -902,6 +1131,7 @@ class ConsoleService:
 
             trial_plan = self._validated_trial_plan(payload) if action == "enter_trial" else None
             wip_override_reason = None
+            board_snapshot = None
             if action == "enter_trial":
                 board = self.board()
                 column = next(value for value in board["columns"] if value["id"] == "trial_active")
@@ -911,6 +1141,23 @@ class ConsoleService:
                         raise ConsoleError(
                             f"trial WIP is {column['count']}/{column['wip_limit']}; wip_override_reason is required"
                         )
+                current_card = next(
+                    (value for value in board["cards"] if candidate_id in value["related_ids"]),
+                    None,
+                )
+                board_snapshot = {
+                    "captured_at": board["generated_at"],
+                    "stage": current_card.get("stage") if current_card else None,
+                    "counts": board["counts"],
+                    "wip_exceeded": [
+                        value["stage"] for value in board["advisories"]
+                        if value["type"] == "wip_exceeded"
+                    ],
+                    "closeout_card_ids": [
+                        value["card_id"] for value in board["cards"]
+                        if value["stage"] == "closeout"
+                    ],
+                }
             deferred_until = None
             if action == "defer":
                 deferred_until = str(
@@ -937,7 +1184,8 @@ class ConsoleService:
                     "trial_plan": trial_plan,
                     "deferred_until": deferred_until,
                     "handoff_kind": "start_trial" if action == "enter_trial" else None,
-                    "next_instruction": NEXT_INSTRUCTION if action == "enter_trial" else None,
+                    "attempt": 1 if action == "enter_trial" else None,
+                    "board_snapshot": board_snapshot,
                     "wip_override_reason": wip_override_reason,
                 },
             )
@@ -960,6 +1208,33 @@ class ConsoleService:
                     action_record = transition_user_action(
                         self.database, action_id, "handoff_pending"
                     )
+                    current_board = self.board()
+                    current_card = next(
+                        (value for value in current_board["cards"] if action_id in value["related_ids"]),
+                        None,
+                    )
+                    stable_snapshot = {
+                        "captured_at": current_board["generated_at"],
+                        "stage": current_card.get("stage") if current_card else None,
+                        "counts": current_board["counts"],
+                        "wip_exceeded": [
+                            value["stage"] for value in current_board["advisories"]
+                            if value["type"] == "wip_exceeded"
+                        ],
+                        "closeout_card_ids": [
+                            value["card_id"] for value in current_board["cards"]
+                            if value["stage"] == "closeout"
+                        ],
+                        "handoff_status": "handoff_pending",
+                        "attempt": 1,
+                    }
+                    action_record = transition_user_action(
+                        self.database,
+                        action_id,
+                        "handoff_pending",
+                        payload_update={"board_snapshot": stable_snapshot},
+                    )
+                    action_record["next_instruction"] = self.handoff_instruction(action_record)
                 else:
                     finish_user_action(self.database, action_id, "completed")
                     action_record = get_user_action(self.database, action_id)
@@ -974,7 +1249,9 @@ class ConsoleService:
             "candidate_id": candidate_id,
             "event": event,
             "handoff": action_record if action == "enter_trial" else None,
-            "next_instruction": NEXT_INSTRUCTION if action == "enter_trial" else None,
+            "next_instruction": (
+                self.handoff_instruction(action_record) if action == "enter_trial" else None
+            ),
         }
 
 
@@ -1025,8 +1302,17 @@ def handler_factory(service: ConsoleService, token: str):
             if parsed.path == "/app.js":
                 self._static("app.js", "text/javascript; charset=utf-8")
                 return
+            if parsed.path == "/favicon.ico":
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.end_headers()
+                return
             if parsed.path == "/api/config":
-                self._json({"token": token, "workspace": service.workspace.name})
+                self._json({
+                    "token": token,
+                    "workspace": service.workspace.name,
+                    "fingerprint": service.workspace_fingerprint,
+                    "workspace_source": service.workspace_source,
+                })
                 return
             if parsed.path == "/api/overview":
                 self._json(service.overview())
@@ -1060,13 +1346,30 @@ def handler_factory(service: ConsoleService, token: str):
             if parsed.path == "/api/handoffs":
                 self._json({"handoffs": service.handoffs()})
                 return
+            if parsed.path == "/api/console-context":
+                query = parse_qs(parsed.query)
+                try:
+                    self._json(service.console_context(
+                        handoff_id=(query.get("handoff") or [None])[0],
+                        card_id=(query.get("card") or [None])[0],
+                    ))
+                except ConsoleError as error:
+                    self._json({"error": str(error)}, 404)
+                return
+            if parsed.path == "/api/report":
+                query = parse_qs(parsed.query)
+                try:
+                    self._json(service.report((query.get("run") or [""])[0]))
+                except ConsoleError as error:
+                    self._json({"error": str(error)}, 404)
+                return
             self.send_error(HTTPStatus.NOT_FOUND)
 
         def do_POST(self) -> None:
             if self.headers.get("X-Dream-Token") != token:
                 self._json({"error": "invalid local action token"}, 403)
                 return
-            if self.path not in {"/api/candidate-actions", "/api/board-policy", "/api/validation-actions"}:
+            if self.path not in {"/api/candidate-actions", "/api/board-policy", "/api/validation-actions", "/api/handoff-retry"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
             try:
@@ -1078,10 +1381,14 @@ def handler_factory(service: ConsoleService, token: str):
                     self._json(service.update_board_policy(payload), 200)
                 elif self.path == "/api/validation-actions":
                     self._json(service.submit_validation_action(payload), 201)
+                elif self.path == "/api/handoff-retry":
+                    self._json(service.retry_handoff(str(payload.get("action_id") or ""), payload), 200)
                 else:
                     self._json(service.submit_candidate_action(payload), 201)
             except (ConsoleError, json.JSONDecodeError, UnicodeDecodeError) as error:
                 self._json({"error": str(error)}, 400)
+            except WorkspaceLockError as error:
+                self._json({"error": str(error)}, 409)
             except Exception:
                 self._json({"error": "candidate action failed; inspect local logs"}, 500)
 
@@ -1096,14 +1403,19 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    workspace_source: str = "argument",
 ) -> None:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ConsoleError("Dream Console is local-only; bind to a loopback address")
-    service = ConsoleService(workspace)
+    service = ConsoleService(workspace, workspace_source)
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer((host, port), handler_factory(service, token))
     url = f"http://{host}:{server.server_address[1]}"
-    print(json.dumps({"url": url, "workspace": str(service.workspace)}, ensure_ascii=False))
+    print(json.dumps({
+        "url": url,
+        "workspace_fingerprint": service.workspace_fingerprint,
+        "workspace_source": service.workspace_source,
+    }, ensure_ascii=False))
     if open_browser:
         webbrowser.open(url)
     try:
@@ -1114,8 +1426,154 @@ def serve(
         server.server_close()
 
 
+def _runtime_file(workspace: Path) -> Path:
+    return Path(workspace) / "state" / "private" / "console-service.json"
+
+
+def _read_runtime(workspace: Path) -> dict[str, Any] | None:
+    path = _runtime_file(workspace)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _pid_matches_console(pid: int, workspace: Path) -> bool:
+    if os.name == "nt":
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    command = result.stdout.strip()
+    return "codex_dream.console" in command and str(Path(workspace)) in command
+
+
+def console_status(workspace: Path) -> dict[str, Any]:
+    record = _read_runtime(workspace)
+    if not record:
+        return {"status": "stopped", "running": False}
+    pid = int(record.get("pid") or 0)
+    alive = _pid_alive(pid)
+    healthy = False
+    if alive:
+        try:
+            with urlopen(str(record["url"]) + "/api/config", timeout=0.5) as response:
+                config = json.load(response)
+                healthy = bool(
+                    response.status == 200
+                    and config.get("fingerprint") == workspace_fingerprint(workspace)
+                )
+        except Exception:
+            healthy = False
+    return {
+        "status": "running" if healthy else ("unhealthy" if alive else "stale_pid"),
+        "running": healthy,
+        "pid": pid,
+        "url": record.get("url"),
+        "workspace_fingerprint": workspace_fingerprint(workspace),
+    }
+
+
+def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> dict[str, Any]:
+    status = console_status(workspace)
+    if status.get("running"):
+        return {**status, "already_running": True}
+    if status.get("status") == "unhealthy":
+        raise ConsoleError("Console PID is alive but unhealthy; stop it before restarting")
+    runtime = _runtime_file(workspace)
+    if status.get("status") == "stale_pid" and runtime.exists():
+        runtime.unlink()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.2)
+        if probe.connect_ex((host, port)) == 0:
+            raise ConsoleError(f"port {port} is already in use")
+    log_path = runtime.parent / "console-service.log"
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        sys.executable,
+        "-m",
+        "codex_dream.console",
+        "serve",
+        "--workspace",
+        str(workspace),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--no-open",
+    ]
+    with log_path.open("ab") as log:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=(os.name != "nt"),
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+        )
+    url = f"http://{host}:{port}"
+    runtime.write_text(
+        json.dumps({"pid": process.pid, "url": url, "started_at": datetime.now(timezone.utc).isoformat()}, sort_keys=True),
+        encoding="utf-8",
+    )
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        current = console_status(workspace)
+        if current.get("running"):
+            # The service intentionally outlives this launcher; detach the Popen wrapper.
+            process.returncode = 0
+            if open_browser:
+                webbrowser.open(url + "/#home")
+            return {**current, "already_running": False}
+        if process.poll() is not None:
+            break
+        time.sleep(0.1)
+    if runtime.exists() and process.poll() is not None:
+        runtime.unlink()
+    raise ConsoleError(f"Console did not start; inspect {log_path}")
+
+
+def stop_console(workspace: Path) -> dict[str, Any]:
+    status = console_status(workspace)
+    runtime = _runtime_file(workspace)
+    if status.get("status") in {"stopped", "stale_pid"}:
+        if runtime.exists():
+            runtime.unlink()
+        return {"status": "stopped", "running": False, "already_stopped": True}
+    pid = int(status["pid"])
+    if status.get("status") == "unhealthy" and not _pid_matches_console(pid, workspace):
+        raise ConsoleError(
+            "refusing to signal an unhealthy PID whose command does not match this Console Workspace"
+        )
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and _pid_alive(pid):
+        time.sleep(0.05)
+    if runtime.exists():
+        runtime.unlink()
+    return {"status": "stopped", "running": False, "already_stopped": False}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the local-only Codex Dream Console.")
+    parser.add_argument("action", nargs="?", choices=("serve", "start", "status", "stop"), default="serve")
     parser.add_argument("--workspace", type=Path, default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -1126,8 +1584,21 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        workspace, _ = resolve_workspace(args.workspace)
-        serve(workspace, args.host, args.port, open_browser=not args.no_open)
+        workspace, workspace_source = resolve_workspace(args.workspace)
+        if args.action == "status":
+            print(json.dumps(console_status(workspace), ensure_ascii=False))
+        elif args.action == "stop":
+            print(json.dumps(stop_console(workspace), ensure_ascii=False))
+        elif args.action == "start":
+            print(json.dumps(start_console(workspace, args.host, args.port, not args.no_open), ensure_ascii=False))
+        else:
+            serve(
+                workspace,
+                args.host,
+                args.port,
+                open_browser=not args.no_open,
+                workspace_source=workspace_source,
+            )
     except (ConsoleError, ValueError) as error:
         raise SystemExit(str(error)) from error
     return 0

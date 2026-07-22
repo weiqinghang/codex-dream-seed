@@ -1,5 +1,8 @@
 # Codex Dream Seed
 
+新用户和日常操作请先看 [Dream 操作手册](skills/codex-dream/references/operating-handbook.md)。它是 Console、
+Codex Agent 与本文共同使用的状态、动作、恢复和隐私语义源。
+
 Codex Dream Seed 是一套本地优先、跨项目、增量运行的 Codex 协作复盘框架。
 
 它读取本机可访问的 Codex session，寻找三类值得长期积累的知识：
@@ -332,11 +335,14 @@ codex-dream run-complete DREAM-0003 \
 
 ## 本地 Dream Console
 
-启动 Console：
+以后台服务启动并查看状态：
 
 ```bash
-codex-dream-console
+codex-dream-console start
+codex-dream-console status
 ```
+
+停止服务使用 `codex-dream-console stop`；前台调试可用 `codex-dream-console serve`。
 
 `develop` 的 0.4.0 线提供经过端到端验收的 Console Flow Board。默认打开
 `http://127.0.0.1:8765`。Console 是 Codex 的轻量复盘伴侣，提供首页注意力窗口、推进泳道、
@@ -364,17 +370,21 @@ codex-dream run-resume DREAM-0001 --reason "依赖已经恢复"
 
 用户可暂缓、拒绝候选，或在确认作用范围、预期固化载体、观察期限和成功标准后制定试用
 计划。计划确认后只会进入 `等待 Codex 接续`，不会被伪装成已经开始实验。页面会明确提示
-用户回到 Codex，并提供接续指令：
+用户回到 Codex，并提供含稳定 `ACT-*`、Workspace fingerprint 和 attempt 的新 Session
+接续指令。不得用“刚才那项”或最近项猜测：
 
 ```text
-继续处理我刚才在 Dream Console 中确认的事项。
+请处理 Dream handoff ACT-000001；先核对 doctor 与 console-context，再按指定 fingerprint 和 attempt 领取。
 ```
 
 Codex 侧通过以下命令读取、领取和回写交接：
 
 ```bash
-codex-dream handoff-list --status handoff_pending
-codex-dream handoff-claim ACT-000001
+codex-dream doctor
+codex-dream console-context --handoff ACT-000001 \
+  --expect-fingerprint ws-0123456789ab --expect-attempt 1
+codex-dream handoff-claim ACT-000001 \
+  --expect-fingerprint ws-0123456789ab --expect-attempt 1
 codex-dream handoff-complete ACT-000001 \
   --result '{"outcome":"trial_started","adoption_id":"ADP-0001","validation_id":"VAL-0001"}'
 ```

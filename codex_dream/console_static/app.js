@@ -11,9 +11,11 @@ const state = {
   validationSort: "progress_desc",
   filter: "all",
   selected: null,
+  config: {},
+  activeHandoff: null,
+  lastUpdatedAt: null,
 };
 
-const NEXT_INSTRUCTION = "继续处理我刚才在 Dream Console 中确认的事项。";
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -22,6 +24,33 @@ const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => 
 const formatDate = (value) => value
   ? new Intl.DateTimeFormat("zh-CN", {year: "numeric", month: "short", day: "numeric"}).format(new Date(value))
   : "—";
+const formatDuration = (seconds) => {
+  if (!Number.isFinite(seconds)) return "耗时未记录";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.floor(seconds % 60);
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const restMinutes = minutes % 60;
+    return `耗时 ${hours} 小时 ${restMinutes} 分`;
+  }
+  return `耗时 ${minutes} 分 ${remainder} 秒`;
+};
+const formatTokenCount = (value) => new Intl.NumberFormat("zh-CN", {notation: value >= 10000 ? "compact" : "standard", maximumFractionDigits: 1}).format(value);
+const tokenSummary = (run) => {
+  const usage = run.run_metrics?.token_usage;
+  if (!Number.isFinite(usage?.total_tokens)) return "Token 未记录";
+  const breakdown = [
+    Number.isFinite(usage.input_tokens) ? `输入 ${formatTokenCount(usage.input_tokens)}` : "",
+    Number.isFinite(usage.cached_input_tokens) ? `缓存 ${formatTokenCount(usage.cached_input_tokens)}` : "",
+    Number.isFinite(usage.output_tokens) ? `输出 ${formatTokenCount(usage.output_tokens)}` : "",
+  ].filter(Boolean).join(" · ");
+  return `Token ${formatTokenCount(usage.total_tokens)}${breakdown ? `（${breakdown}）` : ""}`;
+};
+const dreamOrdinal = (runId) => {
+  const match = String(runId || "").match(/(\d+)$/);
+  if (!match) return "—";
+  return match[1].replace(/^0+(?=\d)/, "").padStart(2, "0");
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -36,9 +65,10 @@ async function api(path, options = {}) {
 const viewCopy = {
   home: ["TODAY", "今天需要你关注什么", "这里只放最关键的事项。决定以后，回到 Codex 继续真正的工作。"],
   board: ["COMMITMENT FLOW", "每一个梦境，现在走到哪里", "按泳道控制在制品、发现滞留，并优先关闭已经具备验收条件的事项。"],
-  runs: ["DREAM HISTORY", "每一次梦境，都有清晰边界", "查看周期范围、完成状态和已经形成的报告。"],
+  runs: ["DREAM HISTORY", "每一次梦境，都有清晰边界", "最新梦境在最上方；查看审阅范围、耗时、Token 记录与最终报告。"],
   improvements: ["IMPROVEMENT TRACKING", "掌握每一项改进的旅程", "先看全局状态，再进入单项细节；候选池不会被 Top 5 截断。"],
   knowledge: ["KNOWLEDGE BASE", "已经沉淀了什么", "检查知识、载体、采用和验证是否真正落实。"],
+  help: ["OPERATING HANDBOOK", "使用指南", "从第一次 Dream、稳定接续、验证判断到故障恢复。"],
 };
 
 function setView(name) {
@@ -64,9 +94,10 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => toast.classList.remove("is-visible"), 2200);
 }
 
-async function copyInstruction(button) {
+async function copyInstruction(button, content) {
   try {
-    await navigator.clipboard.writeText(NEXT_INSTRUCTION);
+    const text = content || state.activeHandoff?.next_instruction || "开始做梦";
+    await navigator.clipboard.writeText(text);
     showToast("已复制。回到 Codex 粘贴即可继续。 ");
     if (button) {
       const original = button.textContent;
@@ -83,6 +114,7 @@ function renderHandoffBanner() {
     || state.handoffs.find((item) => item.status === "claimed")
     || state.handoffs.find((item) => item.status === "failed");
   const banner = $("#handoff-banner");
+  state.activeHandoff = active || null;
   banner.classList.toggle("is-hidden", !active);
   if (!active) return;
   const labels = {
@@ -92,7 +124,9 @@ function renderHandoffBanner() {
   };
   const [title, copy] = labels[active.status];
   $("#handoff-title").textContent = title;
-  $("#handoff-copy").textContent = copy;
+  $("#handoff-copy").textContent = `${copy} · ${active.action_id} · 第 ${active.payload?.attempt || 1} 次尝试`;
+  $("#copy-handoff").classList.toggle("is-hidden", active.status === "failed");
+  $("#retry-handoff").classList.toggle("is-hidden", active.status !== "failed");
 }
 
 function attentionCard(item, index) {
@@ -110,6 +144,8 @@ function attentionCard(item, index) {
 
 function renderHome() {
   renderHandoffBanner();
+  const isEmpty = state.runs.length === 0 && state.improvements.items.length === 0;
+  $("#first-run").classList.toggle("is-hidden", !isEmpty);
   $("#nav-attention-count").textContent = state.improvements.attention.length;
   $("#attention-list").innerHTML = state.improvements.attention.length
     ? state.improvements.attention.map(attentionCard).join("")
@@ -125,12 +161,38 @@ function renderHome() {
 }
 
 function renderRuns() {
-  $("#runs-list").innerHTML = state.runs.length ? state.runs.map((run, index) => `
+  const runs = [...state.runs].sort((a, b) => Date.parse(b.started_at || 0) - Date.parse(a.started_at || 0));
+  $("#runs-list").innerHTML = runs.length ? runs.map((run) => `
     <article class="timeline-entry">
-      <div class="timeline-marker"><span>${String(index + 1).padStart(2, "0")}</span><i></i></div>
-      <div><time>${formatDate(run.started_at)}</time><h2>${escapeHtml(run.title)}</h2><p>${run.report_path ? `报告已保存 · ${escapeHtml(run.report_path)}` : "这一轮尚未形成周期报告"}</p></div>
+      <div class="timeline-marker"><span>${escapeHtml(dreamOrdinal(run.run_id))}</span><i></i></div>
+      <div class="run-content">
+        <time>${formatDate(run.started_at)} · ${escapeHtml(run.run_id)}</time>
+        <h2>${escapeHtml(run.title)}</h2>
+        <div class="run-metrics">
+          <span>${run.reviewed_task_count ?? run.task_count ?? 0} 个审阅任务</span>
+          <span>${formatDuration(run.run_metrics?.duration_seconds)}</span>
+          <span class="${run.run_metrics?.token_usage ? "" : "is-missing"}">${escapeHtml(tokenSummary(run))}</span>
+        </div>
+        <p>${run.report_path ? `<button type="button" class="text-button" data-open-report="${escapeHtml(run.run_id)}">在 Console 安全打开报告</button>` : "这一轮尚未形成周期报告"}</p>
+      </div>
       <span class="status-pill">${escapeHtml(run.status)}</span>
-    </article>`).join("") : '<div class="empty-state">还没有记录完整的梦境周期。</div>';
+    </article>`).join("") : '<div class="empty-state">还没有梦境。回到 Codex 发送“开始做梦”，完成后这里会显示时间、序号和报告。</div>';
+  $$('[data-open-report]').forEach((button) => button.addEventListener("click", () => openReport(button.dataset.openReport)));
+}
+
+async function openReport(runId) {
+  const dialog = $("#report-dialog");
+  $("#report-title").textContent = "正在读取已登记报告…";
+  $("#report-content").textContent = "";
+  dialog.showModal();
+  try {
+    const report = await api(`/api/report?run=${encodeURIComponent(runId)}`);
+    $("#report-title").textContent = report.title;
+    $("#report-content").textContent = report.content;
+  } catch (error) {
+    $("#report-title").textContent = "报告无法读取";
+    $("#report-content").textContent = error.message;
+  }
 }
 
 function boardCard(card) {
@@ -537,7 +599,18 @@ async function submitDecision(event) {
       headers: {"X-Dream-Token": state.token},
       body: JSON.stringify(payload),
     });
-    await loadData();
+    if (result.next_instruction) {
+      $("#next-instruction").textContent = result.next_instruction;
+      state.activeHandoff = result.handoff;
+      state.activeHandoff.next_instruction = result.next_instruction;
+    }
+    try {
+      await loadData();
+    } catch (refreshError) {
+      $("#form-status").textContent = `记录已成功写入，但页面刷新失败：${refreshError.message}。请勿重复提交，点击刷新或用 Console Context 核对。`;
+      $("#refresh-state").textContent = "写入成功 · 刷新失败 · 数据可能陈旧";
+      return;
+    }
     if (result.status === "handoff_pending") {
       $("#decision-form").classList.add("is-hidden");
       $("#handoff-result").classList.remove("is-hidden");
@@ -553,32 +626,66 @@ async function submitDecision(event) {
 }
 
 async function loadData() {
-  const [overview, runs, knowledge, improvements, handoffs, board] = await Promise.all([
+  $("#refresh-state").textContent = "正在刷新…";
+  const results = await Promise.allSettled([
     api("/api/overview"), api("/api/runs"), api("/api/knowledge"), api("/api/improvements"), api("/api/handoffs"), api("/api/board"),
   ]);
-  state.overview = overview;
-  state.runs = runs.runs;
-  state.knowledge = knowledge.items;
-  state.improvements = improvements;
-  state.handoffs = handoffs.handoffs;
-  state.board = board;
+  const keys = ["overview", "runs", "knowledge", "improvements", "handoffs", "board"];
+  const failures = [];
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      failures.push(keys[index]);
+      return;
+    }
+    const value = result.value;
+    if (keys[index] === "runs") state.runs = value.runs;
+    else if (keys[index] === "knowledge") state.knowledge = value.items;
+    else if (keys[index] === "handoffs") state.handoffs = value.handoffs;
+    else state[keys[index]] = value;
+  });
   renderHome();
   renderRuns();
   renderImprovements();
   renderKnowledge();
   renderBoardFilters();
   renderBoard();
+  state.lastUpdatedAt = new Date();
+  const time = state.lastUpdatedAt.toLocaleTimeString("zh-CN", {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  $("#refresh-state").textContent = failures.length
+    ? `部分刷新失败（${failures.join("、")}）· 已保留成功数据 · ${time}`
+    : `已更新 ${time}`;
+  if (failures.length === results.length) throw new Error("所有 Console API 均刷新失败");
 }
 
 async function boot() {
   try {
     const config = await api("/api/config");
+    state.config = config;
     state.token = config.token;
-    $("#workspace-name").textContent = config.workspace;
+    $("#workspace-name").textContent = `${config.fingerprint} · ${config.workspace_source}`;
     await loadData();
     setView((location.hash || "#home").slice(1));
   } catch (error) {
     document.body.innerHTML = `<main class="fatal-error"><b>Dream Console 无法读取本地 Workspace</b><span>${escapeHtml(error.message)}</span></main>`;
+  }
+}
+
+async function retryActiveHandoff() {
+  const handoff = state.activeHandoff;
+  if (!handoff || handoff.status !== "failed") return;
+  const reason = window.prompt("请说明这次重试的原因（会写入历史）：", "已排除上一轮失败原因，重新接续。");
+  if (!reason || reason.trim().length < 3) return;
+  const requestId = globalThis.crypto?.randomUUID?.() || `retry-${Date.now()}`;
+  try {
+    await api("/api/handoff-retry", {
+      method: "POST",
+      headers: {"X-Dream-Token": state.token},
+      body: JSON.stringify({action_id: handoff.action_id, reason: reason.trim(), source: "human:dream-console", request_id: requestId}),
+    });
+    await loadData();
+    showToast("已保留失败历史并重新排队，可复制新的接续指令。 ");
+  } catch (error) {
+    showToast(`重试未写入：${error.message}`);
   }
 }
 
@@ -591,7 +698,12 @@ $("[data-cancel-action]").addEventListener("click", () => {
 });
 $("#decision-form").addEventListener("submit", submitDecision);
 $("#copy-handoff").addEventListener("click", (event) => copyInstruction(event.currentTarget));
-$("#copy-result").addEventListener("click", (event) => copyInstruction(event.currentTarget));
+$("#copy-result").addEventListener("click", (event) => copyInstruction(event.currentTarget, $("#next-instruction").textContent));
+$("#copy-first-dream").addEventListener("click", (event) => copyInstruction(event.currentTarget, "开始做梦"));
+$("#retry-handoff").addEventListener("click", retryActiveHandoff);
+$("#refresh-data").addEventListener("click", () => loadData().catch((error) => {
+  $("#refresh-state").textContent = `刷新失败 · 数据可能陈旧 · ${error.message}`;
+}));
 $("#improvement-dialog").addEventListener("click", (event) => {
   if (event.target === $("#improvement-dialog")) closeDialog();
 });
@@ -606,7 +718,12 @@ $("#board-sort").addEventListener("change", (event) => {
 $("#open-policy").addEventListener("click", openPolicy);
 $$('[data-board-close]').forEach((button) => button.addEventListener("click", () => $("#board-dialog").close()));
 $$('[data-policy-close]').forEach((button) => button.addEventListener("click", () => $("#policy-dialog").close()));
+$$('[data-report-close]').forEach((button) => button.addEventListener("click", () => $("#report-dialog").close()));
 $("#policy-form").addEventListener("submit", submitPolicy);
 window.addEventListener("hashchange", () => setView((location.hash || "#home").slice(1)));
+window.addEventListener("focus", () => loadData().catch(() => {}));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") loadData().catch(() => {});
+});
 
 boot();

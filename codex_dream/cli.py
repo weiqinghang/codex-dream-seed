@@ -27,6 +27,7 @@ from .workspace import (
     load_config,
     resolve_workspace,
     set_default_workspace,
+    workspace_fingerprint,
 )
 
 
@@ -53,7 +54,12 @@ def _parser() -> argparse.ArgumentParser:
         "--ledger",
         type=Path,
         default=None,
-        help="Override the private session ledger path",
+        help="Legacy/debug escape hatch: override the private session ledger path",
+    )
+    parser.add_argument(
+        "--allow-legacy-ledger",
+        action="store_true",
+        help="Explicitly acknowledge that --ledger can create a parallel fact source",
     )
     parser.add_argument(
         "--since-days",
@@ -176,6 +182,8 @@ def _parser() -> argparse.ArgumentParser:
         "handoff-claim", help="Acknowledge one Console decision before executing it"
     )
     handoff_claim.add_argument("action_id")
+    handoff_claim.add_argument("--expect-fingerprint", required=True)
+    handoff_claim.add_argument("--expect-attempt", type=int, required=True)
 
     handoff_complete = subcommands.add_parser(
         "handoff-complete", help="Record that Codex processed a claimed handoff"
@@ -192,6 +200,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     handoff_fail.add_argument("action_id")
     handoff_fail.add_argument("--error", required=True)
+
+    handoff_retry = subcommands.add_parser(
+        "handoff-retry", help="Requeue one failed Console handoff with preserved history"
+    )
+    handoff_retry.add_argument("action_id")
+    handoff_retry.add_argument("--reason", required=True)
+    handoff_retry.add_argument("--source", required=True)
+    handoff_retry.add_argument("--request-id", required=True)
+
+    console_context = subcommands.add_parser(
+        "console-context", help="Read a privacy-reduced Console and handoff snapshot"
+    )
+    console_context.add_argument("--handoff", default=None)
+    console_context.add_argument("--card", default=None)
+    console_context.add_argument("--expect-fingerprint", default=None)
+    console_context.add_argument("--expect-attempt", type=int, default=None)
     return parser
 
 
@@ -306,10 +330,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if workspace_versions(workspace)["workspace_schema"] >= 2
         else workspace / "state/session-ledger.jsonl"
     )
+    canonical_database = database_path(workspace)
+    if args.ledger and args.ledger.resolve() != canonical_database.resolve() and not args.allow_legacy_ledger:
+        raise SystemExit(
+            "--ledger is a legacy/debug escape hatch and can create a parallel fact source; "
+            "use the Workspace database or pass --allow-legacy-ledger for controlled migration/testing"
+        )
 
     if args.command == "doctor":
         result = doctor_workspace(workspace, codex_home)
         result["workspace_source"] = workspace_source
+        result["workspace_fingerprint"] = workspace_fingerprint(workspace)
         _print_json(result)
         return 0 if result["status"] == "ok" else 1
 
@@ -338,16 +369,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         "handoff-claim",
         "handoff-complete",
         "handoff-fail",
+        "handoff-retry",
+        "console-context",
     }:
         from .database import (
             claim_user_action,
             get_user_action,
             list_user_actions,
             transition_user_action,
+            retry_user_action,
         )
+        from .console import ConsoleService
 
         try:
-            if args.command == "handoff-list":
+            if args.command == "console-context":
+                fingerprint = workspace_fingerprint(workspace)
+                if args.expect_fingerprint and args.expect_fingerprint != fingerprint:
+                    raise ValueError(
+                        f"workspace fingerprint mismatch: expected {args.expect_fingerprint}, got {fingerprint}"
+                    )
+                context = ConsoleService(workspace, workspace_source).console_context(
+                    handoff_id=args.handoff, card_id=args.card
+                )
+                if args.expect_attempt is not None:
+                    actual = (context.get("handoff") or {}).get("attempt")
+                    if actual != args.expect_attempt:
+                        raise ValueError(
+                            f"handoff attempt changed: expected {args.expect_attempt}, got {actual}"
+                        )
+                _print_json(context)
+            elif args.command == "handoff-list":
                 statuses = set(args.status or ["handoff_pending"])
                 actions = [
                     action
@@ -361,7 +412,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 action = get_user_action(ledger_path, args.action_id)
                 if action["action_type"] != "enter_trial":
                     raise ValueError("only an enter_trial action is a Codex handoff")
+                fingerprint = workspace_fingerprint(workspace)
+                if args.expect_fingerprint != fingerprint:
+                    raise ValueError(
+                        f"workspace fingerprint mismatch: expected {args.expect_fingerprint}, got {fingerprint}"
+                    )
+                actual_attempt = int(action["payload"].get("attempt") or 1)
+                if args.expect_attempt != actual_attempt:
+                    raise ValueError(
+                        f"handoff attempt changed: expected {args.expect_attempt}, got {actual_attempt}"
+                    )
                 _print_json(claim_user_action(ledger_path, args.action_id))
+            elif args.command == "handoff-retry":
+                action = get_user_action(ledger_path, args.action_id)
+                if action["action_type"] != "enter_trial":
+                    raise ValueError("only an enter_trial action is a Codex handoff")
+                _print_json(retry_user_action(
+                    ledger_path,
+                    args.action_id,
+                    args.reason,
+                    args.source,
+                    args.request_id,
+                ))
             else:
                 action = get_user_action(ledger_path, args.action_id)
                 if action["action_type"] != "enter_trial":

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from .locking import workspace_write_lock
 from .schema import CURRENT_KNOWLEDGE_SCHEMA
 from .workspace import resolve_workspace
 
@@ -474,7 +475,14 @@ def render_lifecycle(item: dict[str, Any]) -> str:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage Codex Dream knowledge lifecycles.")
     parser.add_argument("--workspace", type=Path, default=None)
-    parser.add_argument("--root", type=Path, default=None)
+    parser.add_argument(
+        "--root", type=Path, default=None,
+        help="Legacy/debug escape hatch for a non-canonical knowledge root",
+    )
+    parser.add_argument(
+        "--allow-legacy-root", action="store_true",
+        help="Required acknowledgment when using --root",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create")
@@ -498,7 +506,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.root is not None:
+        if not args.allow_legacy_root:
+            raise SystemExit(
+                "--root is a legacy/debug escape hatch; pass --allow-legacy-root "
+                "to acknowledge the parallel-fact-source risk"
+            )
         root = args.root.expanduser()
+        workspace = root.parent
     else:
         try:
             workspace, _ = resolve_workspace(args.workspace)
@@ -506,7 +520,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(str(error)) from error
         root = workspace / "knowledge"
     if args.command == "create":
-        item = create_knowledge(root, args.title, args.kind, args.scope, args.summary)
+        with workspace_write_lock(workspace):
+            item = create_knowledge(root, args.title, args.kind, args.scope, args.summary)
         print(json.dumps(item, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "event":
@@ -514,7 +529,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             data = json.load(sys.stdin)
         else:
             data = json.loads(Path(args.data_file).read_text(encoding="utf-8"))
-        event = record_event(root, args.knowledge_id, args.type, data)
+        with workspace_write_lock(workspace):
+            event = record_event(root, args.knowledge_id, args.type, data)
         print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "show":

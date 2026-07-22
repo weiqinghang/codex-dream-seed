@@ -21,6 +21,7 @@
           <button class="nav-item" type="button" data-view="runs"><i>◌</i><span>梦境</span></button>
           <button class="nav-item" type="button" data-view="improvements"><i>↗</i><span>改进追踪</span><b id="nav-attention-count">0</b></button>
           <button class="nav-item" type="button" data-view="knowledge"><i>◇</i><span>知识库</span></button>
+          <button class="nav-item" type="button" data-view="help"><i>?</i><span>使用指南</span></button>
         </nav>
         <div class="sidebar-note">
           <span class="local-dot"></span>
@@ -35,12 +36,26 @@
             <h1 id="page-title">今天需要你关注什么</h1>
             <p id="page-description">这里只放最关键的事项。决定以后，回到 Codex 继续真正的工作。</p>
           </div>
-          <div class="codex-boundary" title="Console 不会自行调用模型或执行项目变更">
-            <span></span> 决策在这里，执行在 Codex
+          <div class="runtime-controls">
+            <div class="refresh-state" id="refresh-state" aria-live="polite">正在加载…</div>
+            <button type="button" class="button ghost" id="refresh-data">刷新</button>
+            <div class="codex-boundary" title="Console 不会自行调用模型或执行项目变更">
+              <span></span> 决策在这里，执行在 Codex
+            </div>
           </div>
         </header>
 
         <section class="view is-visible" id="view-home">
+          <section class="first-run is-hidden" id="first-run">
+            <p class="overline">FIRST DREAM</p>
+            <h2>三步完成第一次 Dream 闭环</h2>
+            <div class="first-run-steps">
+              <article><b>1 · 开始做梦</b><p>回到 Codex 发送“开始做梦”，Dream 会在当前 Workspace 建立可追溯周期。</p></article>
+              <article><b>2 · 查看和决定</b><p>完成后回到这里查看梦境、候选与证据，再暂缓、拒绝或制定试用。</p></article>
+              <article><b>3 · 回到 Codex 接续</b><p>复制带 ACT-* 的定位指令到新 Session，执行结果会写回同一 Workspace。</p></article>
+            </div>
+            <button type="button" class="button primary" id="copy-first-dream">复制“开始做梦”</button>
+          </section>
           <section class="handoff-banner is-hidden" id="handoff-banner">
             <div class="handoff-icon">↗</div>
             <div>
@@ -49,6 +64,7 @@
               <p id="handoff-copy">Console 已保存你的决定，但不会自行开始实验。</p>
             </div>
             <button type="button" class="button primary" id="copy-handoff">复制接续指令</button>
+            <button type="button" class="button danger is-hidden" id="retry-handoff">重试接续</button>
           </section>
 
           <div class="section-head">
@@ -120,6 +136,22 @@
             </article>
           </div>
         </section>
+
+        <section class="view" id="view-help">
+          <div class="guide">
+            <p class="overline">OPERATING HANDBOOK</p>
+            <h2>从第一次 Dream 到验证收尾</h2>
+            <p>这是 canonical《Dream 操作手册》的 Console 入口。完整手册位于仓库 <code>docs/dream-operating-handbook.md</code>。</p>
+            <div class="guide-grid">
+              <article><b>角色分工</b><p>Dream 发现模式；Console 查看、决策和追踪；Codex 执行；Workspace 保存共同事实。</p></article>
+              <article><b>五列语义</b><p>待决策 → 试用落实 → 验证中 → 待收尾 → 完成。handoff 不是泳道。</p></article>
+              <article><b>可靠接续</b><p>复制 ACT-* 指令，先 doctor 和 console-context，再核对 fingerprint、attempt、范围与成功标准。</p></article>
+              <article><b>失败恢复</b><p>handoff failed 可正式重试；页面刷新失败先核对 Context，不要重复提交已成功写入的动作。</p></article>
+              <article><b>验证判断</b><p>正向、负向和不确定证据分别保留；100% 进度不能替代成功标准和关键反证复核。</p></article>
+              <article><b>隐私边界</b><p>Console 只监听本机；不展示原始 Session、消息、绝对路径或凭证，只读取已登记报告。</p></article>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -139,7 +171,7 @@
             <label>准备尝试什么<textarea id="trial-proposal" placeholder="描述最小可行尝试"></textarea></label>
             <div class="field-grid">
               <label>影响范围<select id="trial-scope"><option value="project">当前项目</option><option value="environment">整个 Codex 环境</option></select></label>
-              <label>预期固化载体<select id="trial-carrier" required><option value="">请你选择</option><option value="project_instruction">项目规则 / AGENTS.md</option><option value="environment_instruction">环境级规则</option><option value="skill">Skill</option><option value="script">脚本</option><option value="template">模板</option><option value="checker">检查器</option><option value="knowledge_only">仅保留为知识</option></select></label>
+              <label>预期固化载体<select id="trial-carrier"><option value="">请你选择</option><option value="project_instruction">项目规则 / AGENTS.md</option><option value="environment_instruction">环境级规则</option><option value="skill">Skill</option><option value="script">脚本</option><option value="template">模板</option><option value="checker">检查器</option><option value="knowledge_only">仅保留为知识</option></select></label>
               <label>观察任务数<input id="trial-sessions" type="number" min="1" value="5"></label>
               <label>最长观察天数<input id="trial-days" type="number" min="1" value="30"></label>
               <label>提醒日期<input id="trial-reminder" type="date"></label>
@@ -184,6 +216,15 @@
         <div class="dialog-actions"><button type="button" class="button ghost" data-policy-close>取消</button><button class="button primary" type="submit">保存策略</button></div>
         <p class="form-status" id="policy-status" role="status"></p>
       </form>
+    </dialog>
+
+    <dialog id="report-dialog">
+      <div class="dialog-shell report-shell">
+        <button type="button" class="dialog-close" data-report-close aria-label="关闭">×</button>
+        <p class="overline">REGISTERED DREAM REPORT</p>
+        <h2 id="report-title">Dream 报告</h2>
+        <pre id="report-content"></pre>
+      </div>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

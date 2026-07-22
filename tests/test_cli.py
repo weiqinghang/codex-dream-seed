@@ -4,13 +4,13 @@ import os
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from codex_dream.cli import main
-from codex_dream.database import begin_user_action, get_user_action, transition_user_action
-from codex_dream.workspace import init_workspace
+from codex_dream.database import begin_user_action, database_path, get_user_action, transition_user_action
+from codex_dream.workspace import init_workspace, workspace_fingerprint
 from tests.test_ledger import append_event, write_rollout
 
 
@@ -39,9 +39,20 @@ class CliTests(unittest.TestCase):
                     str(self.home),
                     "--ledger",
                     str(self.ledger),
+                    "--allow-legacy-ledger",
                     *arguments,
                 ]
             )
+        return exit_code, json.loads(output.getvalue())
+
+    def run_canonical_cli(self, *arguments):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = main([
+                "--workspace", str(self.root),
+                "--codex-home", str(self.home),
+                *arguments,
+            ])
         return exit_code, json.loads(output.getvalue())
 
     def test_sync_dry_run_does_not_create_ledger(self):
@@ -69,6 +80,7 @@ class CliTests(unittest.TestCase):
                     str(self.home),
                     "--ledger",
                     str(self.ledger),
+                    "--allow-legacy-ledger",
                     "--since-days",
                     "7",
                     "sync",
@@ -98,6 +110,7 @@ class CliTests(unittest.TestCase):
                     str(self.home),
                     "--ledger",
                     str(self.ledger),
+                    "--allow-legacy-ledger",
                     "--since-days",
                     "7",
                     "pending",
@@ -238,7 +251,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["handoffs"][0]["action_id"], action_id)
 
-        _, claimed = self.run_cli("handoff-claim", action_id)
+        _, claimed = self.run_cli(
+            "handoff-claim", action_id,
+            "--expect-fingerprint", workspace_fingerprint(self.root),
+            "--expect-attempt", "1",
+        )
         self.assertEqual(claimed["status"], "claimed")
         _, completed = self.run_cli(
             "handoff-complete",
@@ -265,6 +282,66 @@ class CliTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "claim it before"):
             self.run_cli(
                 "handoff-complete", action_id, "--result", '{"outcome":"trial_started"}'
+            )
+
+    def test_failed_handoff_can_be_retried_once_with_full_trace(self):
+        action_id = begin_user_action(self.ledger, "enter_trial", "KD-0001", "CAN-0001", "Synthetic.", {"attempt": 1})
+        transition_user_action(self.ledger, action_id, "handoff_pending")
+        self.run_cli(
+            "handoff-claim", action_id,
+            "--expect-fingerprint", workspace_fingerprint(self.root),
+            "--expect-attempt", "1",
+        )
+        self.run_cli("handoff-fail", action_id, "--error", "Synthetic failure")
+        _, retried = self.run_cli(
+            "handoff-retry", action_id,
+            "--reason", "Dependency recovered.",
+            "--source", "agent:test",
+            "--request-id", "retry-cli-1",
+        )
+        self.assertEqual(retried["status"], "handoff_pending")
+        self.assertEqual(retried["payload"]["attempt"], 2)
+        with self.assertRaisesRegex(SystemExit, "only failed|duplicate"):
+            self.run_cli(
+                "handoff-retry", action_id,
+                "--reason", "Duplicate retry.",
+                "--source", "agent:test",
+                "--request-id", "retry-cli-1",
+            )
+
+    def test_console_context_and_claim_fail_closed_on_wrong_workspace_or_attempt(self):
+        action_id = begin_user_action(database_path(self.root), "enter_trial", "KD-0001", "CAN-0001", "Synthetic.", {
+            "attempt": 2,
+            "trial_plan": {"scope": "project", "success_criteria": ["works"]},
+        })
+        transition_user_action(database_path(self.root), action_id, "handoff_pending")
+        fingerprint = workspace_fingerprint(self.root)
+        _, context = self.run_canonical_cli(
+            "console-context", "--handoff", action_id,
+            "--expect-fingerprint", fingerprint, "--expect-attempt", "2",
+        )
+        self.assertEqual(context["workspace"]["fingerprint"], fingerprint)
+        with self.assertRaisesRegex(SystemExit, "fingerprint mismatch"):
+            self.run_canonical_cli(
+                "console-context", "--handoff", action_id,
+                "--expect-fingerprint", "ws-wrong",
+            )
+        with self.assertRaisesRegex(SystemExit, "attempt changed"):
+            self.run_canonical_cli(
+                "console-context", "--handoff", action_id,
+                "--expect-attempt", "1",
+            )
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.run_canonical_cli("handoff-claim", action_id)
+        with self.assertRaisesRegex(SystemExit, "fingerprint mismatch"):
+            self.run_canonical_cli(
+                "handoff-claim", action_id,
+                "--expect-fingerprint", "ws-wrong", "--expect-attempt", "2",
+            )
+        with self.assertRaisesRegex(SystemExit, "attempt changed"):
+            self.run_canonical_cli(
+                "handoff-claim", action_id,
+                "--expect-fingerprint", fingerprint, "--expect-attempt", "1",
             )
 
 

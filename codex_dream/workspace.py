@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import configparser
+import hashlib
 import json
 import os
 import tempfile
@@ -139,6 +140,13 @@ def resolve_workspace(
         f"{WORKSPACE_ENV}, run from an initialized workspace, or run "
         "'codex-dream set-default <workspace>'"
     )
+
+
+def workspace_fingerprint(path: Path) -> str:
+    """Return a stable, non-reversible short identity without exposing the path."""
+    workspace = _absolute_without_resolving(Path(path)).resolve()
+    digest = hashlib.sha256(str(workspace).encode("utf-8")).hexdigest()
+    return f"ws-{digest[:12]}"
 
 
 def set_default_workspace(

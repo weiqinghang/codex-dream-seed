@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 from codex_dream.console import ConsoleError, ConsoleService, handler_factory
-from codex_dream.database import create_run
+from codex_dream.database import claim_user_action, complete_run, create_run, get_user_action, transition_user_action
 from codex_dream.knowledge import create_knowledge, load_item, record_event
 from codex_dream.workspace import init_workspace
 
@@ -74,6 +74,40 @@ class ConsoleServiceTests(unittest.TestCase):
             "criteria_confirmed": True,
         }
 
+    def test_run_view_exposes_duration_and_exact_recorded_tokens(self):
+        run = self.service._run_view(
+            {
+                "run_id": "DREAM-0099",
+                "origin": "native",
+                "started_at": "2026-07-21T01:00:00Z",
+                "completed_at": "2026-07-21T01:12:34Z",
+                "summary": {
+                    "run_metrics": {
+                        "token_usage": {
+                            "input_tokens": 1200,
+                            "cached_input_tokens": 800,
+                            "output_tokens": 300,
+                        }
+                    }
+                },
+            }
+        )
+        self.assertEqual(run["run_metrics"]["duration_seconds"], 754)
+        self.assertEqual(run["run_metrics"]["token_usage"]["total_tokens"], 1500)
+
+    def test_run_view_does_not_invent_imported_duration_or_tokens(self):
+        run = self.service._run_view(
+            {
+                "run_id": "DREAM-0001",
+                "origin": "imported_report",
+                "started_at": "2026-07-13T00:00:00Z",
+                "completed_at": "2026-07-13T00:00:00Z",
+                "summary": {},
+            }
+        )
+        self.assertIsNone(run["run_metrics"]["duration_seconds"])
+        self.assertIsNone(run["run_metrics"]["token_usage"])
+
     def test_defer_is_audited_without_changing_candidate_state_or_attention(self):
         deferred_until = (date.today() + timedelta(days=7)).isoformat()
         result = self.service.submit_candidate_action(
@@ -95,8 +129,8 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(improvements["attention"], [])
         board = self.service.board()
         self.assertEqual(board["counts"]["decision_pending"], 0)
-        self.assertEqual(board["counts"]["deferred"], 1)
-        self.assertEqual(board["cards"][0]["stage"], "deferred")
+        self.assertNotIn("deferred", board["counts"])
+        self.assertEqual(board["cards"], [])
 
     def test_trial_decision_creates_a_handoff_and_refuses_stale_repeat(self):
         result = self.service.submit_candidate_action(
@@ -109,13 +143,17 @@ class ConsoleServiceTests(unittest.TestCase):
             }
         )
         self.assertEqual(result["status"], "handoff_pending")
-        self.assertIn("继续处理", result["next_instruction"])
+        self.assertIn(result["action_id"], result["next_instruction"])
+        self.assertIn("console-context", result["next_instruction"])
+        self.assertIn(self.service.workspace_fingerprint, result["next_instruction"])
         self.assertTrue(result["event"]["data"]["decision_source"].startswith("dream-console:ACT-"))
         item = load_item(self.workspace / "knowledge", self.knowledge_id)
         self.assertEqual(item["candidates"][0]["status"], "accepted")
         handoff = self.service.handoffs()[0]
         self.assertEqual(handoff["status"], "handoff_pending")
         self.assertEqual(handoff["payload"]["trial_plan"]["target_carrier"], "script")
+        self.assertEqual(handoff["payload"]["attempt"], 1)
+        self.assertEqual(handoff["payload"]["board_snapshot"]["stage"], "trial_active")
         self.assertEqual(self.service.improvements()["attention"], [])
         with self.assertRaisesRegex(ConsoleError, "already accepted"):
             self.service.submit_candidate_action(
@@ -126,6 +164,57 @@ class ConsoleServiceTests(unittest.TestCase):
                     "reason": "A stale browser must not overwrite the first decision.",
                 }
             )
+
+    def test_failed_handoff_retry_preserves_attempt_error_claim_and_rejects_duplicates(self):
+        created = self.service.submit_candidate_action({
+            "action": "enter_trial", "knowledge_id": self.knowledge_id,
+            "candidate_id": self.candidate_id, "reason": "进入可恢复试用。",
+            "trial_plan": self.trial_plan(),
+        })
+        action_id = created["action_id"]
+        claim_user_action(self.service.database, action_id)
+        transition_user_action(self.service.database, action_id, "failed", error="Synthetic failure")
+        retried = self.service.retry_handoff(action_id, {
+            "reason": "依赖已经恢复。", "source": "human:test", "request_id": "retry-1",
+        })
+        self.assertEqual(retried["status"], "handoff_pending")
+        self.assertEqual(retried["payload"]["attempt"], 2)
+        self.assertEqual(retried["payload"]["attempt_history"][0]["error"], "Synthetic failure")
+        self.assertIsNotNone(retried["payload"]["attempt_history"][0]["claimed_at"])
+        with self.assertRaisesRegex(ConsoleError, "duplicate|only failed"):
+            self.service.retry_handoff(action_id, {
+                "reason": "重复请求。", "source": "human:test", "request_id": "retry-1",
+            })
+
+    def test_console_context_is_privacy_reduced_and_detects_changed_handoff_state(self):
+        created = self.service.submit_candidate_action({
+            "action": "enter_trial", "knowledge_id": self.knowledge_id,
+            "candidate_id": self.candidate_id, "reason": "建立上下文快照。",
+            "trial_plan": self.trial_plan(),
+        })
+        context = self.service.console_context(handoff_id=created["action_id"])
+        serialized = json.dumps(context, ensure_ascii=False)
+        self.assertEqual(context["handoff"]["attempt"], 1)
+        self.assertEqual(context["workspace"]["fingerprint"], self.service.workspace_fingerprint)
+        self.assertNotIn(str(self.workspace), serialized)
+        self.assertNotIn("session-", serialized)
+        self.assertFalse(context["possibly_stale"])
+        claim_user_action(self.service.database, created["action_id"])
+        changed = self.service.console_context(handoff_id=created["action_id"])
+        self.assertIn("handoff_status_changed", changed["handoff"]["snapshot_diff"])
+        self.assertTrue(changed["possibly_stale"])
+
+    def test_registered_report_cannot_escape_workspace(self):
+        run = create_run(self.service.database, "Synthetic report", {
+            "user_anchor": {"status": "none", "captured_from": "user_response", "reason": "Synthetic."}
+        })
+        secret = self.workspace / "secret.md"
+        secret.write_text("private", encoding="utf-8")
+        complete_run(self.service.database, run["run_id"], "secret.md", {
+            "user_anchor_result": {"status": "not_applicable", "reason": "Synthetic."}
+        })
+        with self.assertRaisesRegex(ConsoleError, "outside"):
+            self.service.report(run["run_id"])
 
     def test_trial_requires_human_confirmed_criteria_and_carrier(self):
         plan = self.trial_plan()
@@ -281,6 +370,21 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertIn(
             "closeout_ready", {advisory["type"] for advisory in board["advisories"]}
         )
+        self.service.submit_validation_action({
+            "knowledge_id": self.knowledge_id,
+            "validation_id": validation["data"]["validation_id"],
+            "action": "continue",
+            "reason": "Evidence is still insufficient.",
+            "assessments": [],
+        })
+        reopened = self.service.board()["cards"][0]
+        self.assertEqual(reopened["stage"], "validation_active")
+        self.assertIn("下一条合格证据", reopened["next_action"])
+        record_event(
+            self.workspace / "knowledge", self.knowledge_id, "validation_evidence_added",
+            {"validation_id": validation["data"]["validation_id"], "review_unit_id": "TASK-0002", "eligibility": "eligible", "invocation": "synthetic", "compliance": "compliant", "outcome": "positive", "summary": "New evidence after reopening."},
+        )
+        self.assertEqual(self.service.board()["cards"][0]["stage"], "closeout")
 
     def test_validation_guidance_separates_feedback_progress_and_counterevidence(self):
         record_event(self.workspace / "knowledge", self.knowledge_id, "decision_recorded", {"candidate_id": self.candidate_id, "decision": "accepted", "reason": "Synthetic.", "decision_source": "human:test"})
@@ -388,6 +492,11 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertEqual(len(current["criterion_assessments"]), 2)
         self.assertEqual(current["contract"]["eligible_sessions_target"], 2)
         self.assertEqual(len(current["contract_history"]), 1)
+        failed = self.service.submit_validation_action({"knowledge_id": self.knowledge_id, "validation_id": validation["data"]["validation_id"], "action": "failed", "reason": "Counterevidence invalidates the trial.", "assessments": ["not_met", "not_met"]})
+        self.assertEqual(failed["status"], "failed")
+        card = self.service.board()["cards"][0]
+        self.assertEqual(card["stage"], "done")
+        self.assertEqual(card["acceptance"], {"status": "failed", "missing": []})
 
     def test_board_leaves_active_dreams_on_the_dedicated_runs_surface(self):
         run = create_run(
@@ -462,6 +571,7 @@ class ConsoleServiceTests(unittest.TestCase):
         stylesheet = (static_root / "app.css").read_text(encoding="utf-8")
         self.assertNotIn("data-decision=\"accepted\"", html)
         self.assertNotIn(">接受<", html)
+        self.assertNotIn('id="trial-carrier" required', html)
         self.assertGreaterEqual(html.count('type="button"'), 8)
         self.assertEqual(html.count("data-dialog-close"), 2)
         self.assertIn("[data-dialog-close]", javascript)
@@ -474,6 +584,15 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertIn("renderBoard()", javascript)
         self.assertIn("compareBoardCards", javascript)
         self.assertIn("compareValidationCards", javascript)
+        self.assertIn("Date.parse(b.started_at", javascript)
+        self.assertIn("dreamOrdinal(run.run_id)", javascript)
+        self.assertIn("Token 未记录", javascript)
+        self.assertIn("run-metrics", stylesheet)
+        self.assertIn("Promise.allSettled", javascript)
+        self.assertIn('visibilityState === "visible"', javascript)
+        self.assertIn("写入成功", javascript)
+        self.assertIn("first-run-steps", stylesheet)
+        self.assertIn("使用指南", html)
         self.assertIn('value="feedback_desc"', javascript)
         self.assertIn(".evidence-negative", stylesheet)
         self.assertIn("哪些事情会影响验收", javascript)
