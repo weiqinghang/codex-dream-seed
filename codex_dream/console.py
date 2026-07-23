@@ -1524,8 +1524,13 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
             raise ConsoleError(f"port {port} is already in use")
     log_path = runtime.parent / "console-service.log"
     runtime.parent.mkdir(parents=True, exist_ok=True)
+    executable = Path(sys.executable)
+    if os.name == "nt":
+        windowed_executable = executable.with_name("pythonw.exe")
+        if windowed_executable.is_file():
+            executable = windowed_executable
     command = [
-        sys.executable,
+        str(executable),
         "-m",
         "codex_dream.console",
         "serve",
