@@ -27,8 +27,8 @@
 
 ## 构建指纹
 
-- wheel SHA-256：`2c943acffe341f0c67f65af4c5895255631e14c85224ac6da54e9614362f67b8`
-- sdist SHA-256：`2aa349f81098d7f0b7b61ea76809a712ff32ac0ace6f6195bdcaece056c4088f`
+- wheel SHA-256：`3e3c6a6ce9450a1bd5426d00aed6fb4f84ac0fb6d63ef12cd0dacc364d87d614`
+- sdist SHA-256：`d3efa58d63447d4130d6cd912925348a78cc0f52977887971dfc22cce02123c5`
 
 这些指纹用于本次候选的本地可重复性检查，不代替最终 Git tag 和 GitHub Actions 结果。
 

@@ -1411,11 +1411,17 @@ def serve(
     token = secrets.token_urlsafe(24)
     server = ThreadingHTTPServer((host, port), handler_factory(service, token))
     url = f"http://{host}:{server.server_address[1]}"
-    print(json.dumps({
-        "url": url,
-        "workspace_fingerprint": service.workspace_fingerprint,
-        "workspace_source": service.workspace_source,
-    }, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "url": url,
+                "workspace_fingerprint": service.workspace_fingerprint,
+                "workspace_source": service.workspace_source,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     if open_browser:
         webbrowser.open(url)
     try:
@@ -1472,6 +1478,7 @@ def console_status(workspace: Path) -> dict[str, Any]:
     pid = int(record.get("pid") or 0)
     alive = _pid_alive(pid)
     healthy = False
+    health_error = None
     if alive:
         connection = None
         try:
@@ -1484,18 +1491,22 @@ def console_status(workspace: Path) -> dict[str, Any]:
                 response.status == 200
                 and config.get("fingerprint") == workspace_fingerprint(workspace)
             )
-        except Exception:
+        except Exception as error:
             healthy = False
+            health_error = f"{type(error).__name__}: {error}"
         finally:
             if connection is not None:
                 connection.close()
-    return {
+    result = {
         "status": "running" if healthy else ("unhealthy" if alive else "stale_pid"),
         "running": healthy,
         "pid": pid,
         "url": record.get("url"),
         "workspace_fingerprint": workspace_fingerprint(workspace),
     }
+    if health_error is not None:
+        result["health_error"] = health_error
+    return result
 
 
 def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> dict[str, Any]:
@@ -1544,6 +1555,7 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
     # service module under load. Keep the user-facing start bounded without
     # treating a slow-but-healthy launch as a failure.
     deadline = time.monotonic() + 15
+    current = status
     while time.monotonic() < deadline:
         current = console_status(workspace)
         if current.get("running"):
@@ -1555,7 +1567,8 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
         if process.poll() is not None:
             break
         time.sleep(0.1)
-    if process.poll() is None:
+    startup_process_state = process.poll()
+    if startup_process_state is None:
         process.terminate()
         try:
             process.wait(timeout=3)
@@ -1564,7 +1577,12 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
             process.wait(timeout=3)
     if runtime.exists():
         runtime.unlink()
-    raise ConsoleError(f"Console did not start; inspect {log_path}")
+    raise ConsoleError(
+        "Console did not become healthy "
+        f"(process={'running' if startup_process_state is None else startup_process_state}, "
+        f"probe={current.get('health_error', current.get('status'))}); "
+        f"inspect {log_path}"
+    )
 
 
 def stop_console(workspace: Path) -> dict[str, Any]:
