@@ -1543,8 +1543,6 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=log,
-            start_new_session=(os.name != "nt"),
-            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
         )
     url = f"http://{host}:{port}"
     runtime.write_text(
