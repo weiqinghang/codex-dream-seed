@@ -8,7 +8,8 @@
 至少运行：
 
 ```text
-python3 -m unittest discover -s tests -v
+python3 -m unittest tests.console_runtime_tests -v
+python3 -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 并完成：

@@ -17,7 +17,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m unittest discover -s tests -v
+      # Run daemon lifecycle tests in a fresh interpreter before the threaded
+      # HTTP suite. macOS and Windows process startup is not safe to validate
+      # from a test process that has already hosted worker threads.
+      - run: python -m unittest tests.console_runtime_tests -v
+      - run: python -m unittest discover -s tests -p "test_*.py" -v
       - run: python scripts/bootstrap.py --workspace "${{ runner.temp }}/codex-dream-workspace"
       - run: python -c "from pathlib import Path; (Path.home() / '.codex/sessions').mkdir(parents=True, exist_ok=True)"
       - run: python scripts/bootstrap.py --workspace "${{ runner.temp }}/codex-dream-workspace" --apply --skip-cli

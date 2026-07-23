@@ -27,6 +27,12 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn(
             'python: ["3.9", "3.10", "3.11", "3.12", "3.13"]', workflow
         )
+        self.assertIn(
+            "python -m unittest tests.console_runtime_tests -v", workflow
+        )
+        self.assertIn(
+            'python -m unittest discover -s tests -p "test_*.py" -v', workflow
+        )
 
         setup = (self.root / "setup.py").read_text(encoding="utf-8")
         self.assertIn('version="0.4.0"', setup)

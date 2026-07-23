@@ -564,7 +564,8 @@ tests/                       只使用合成 rollout 的测试
 ## 开发与验证
 
 ```bash
-python3 -m unittest discover -s tests -v
+python3 -m unittest tests.console_runtime_tests -v
+python3 -m unittest discover -s tests -p "test_*.py" -v
 python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
   skills/codex-dream
 ```

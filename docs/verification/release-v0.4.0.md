@@ -14,7 +14,7 @@
 
 | 范围 | 结果 | 证据 |
 | --- | --- | --- |
-| Python 本机回归 | 通过 | Python 3.11、3.12、3.13 各运行 101 项测试，全部通过。 |
+| Python 本机回归 | 通过 | Python 3.11、3.12、3.13 各在独立解释器运行 3 项 daemon 测试，再运行其余 98 项，共 101 项，全部通过。 |
 | 声明支持矩阵 | 发布门禁 | GitHub Actions 对三个系统和 Python 3.9–3.13 执行测试、bootstrap dry-run 与 apply。 |
 | 包构建 | 通过 | 离线构建 `0.4.0` sdist 与 `py3-none-any` wheel；wheel 包含 Console 静态资源和 V0→V1、V1→V2 迁移。 |
 | 全新安装 | 通过 | 从最终 wheel 安装到空虚拟环境；bootstrap plan 不写入，apply 后 doctor/verify 均为 `ok`。 |
@@ -27,8 +27,8 @@
 
 ## 构建指纹
 
-- wheel SHA-256：`e96d7161c9a00e35a460875236e528ae5d4ece7c8d964d6d8e302306a2ad6088`
-- sdist SHA-256：`a2fc6a2528f7f4e4b2da4511297186687969deda0cf69947f48987b0abf7b267`
+- wheel SHA-256：`341e485b5869dbe19fcd1819dad0230a2435171c6017e1caed07fc75d3ffc4d7`
+- sdist SHA-256：`36edf6d6263116deea867a9d96c205f936e93b940ac4a08d4f8b4848f88589e3`
 
 这些指纹用于本次候选的本地可重复性检查，不代替最终 Git tag 和 GitHub Actions 结果。
 
