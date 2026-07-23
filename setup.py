@@ -15,10 +15,9 @@ setup(
     long_description_content_type="text/markdown",
     author="weiqinghang",
     url="https://github.com/weiqinghang/codex-dream-seed",
-    license="MIT",
     packages=find_packages(include=["codex_dream*"]),
     package_data={"codex_dream.console_static": ["*.html", "*.css", "*.js"]},
-    python_requires=">=3.9",
+    python_requires=">=3.9,<3.14",
     entry_points={
         "console_scripts": [
             "codex-dream=codex_dream.cli:main",

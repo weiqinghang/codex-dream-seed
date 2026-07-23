@@ -56,12 +56,14 @@ WIP。卡片保留所有关联 ID，进入详情后展示完整生命周期。
 
 | Column | 主实体 | 进入条件 | 离开条件 | 建议初始 WIP |
 | --- | --- | --- | --- | --- |
-| 待决策 Inbox | CAN | candidate 为 proposed，且未处于有效 defer | 拒绝、暂缓或确认试用 | 不设上限，不计活动 WIP |
+| 待决策 | CAN | candidate 为 proposed，且未处于有效 defer | 拒绝、暂缓或确认试用 | 不设上限，不计活动 WIP |
 | 试用落实 | ACT/ADP/CAN | 试用已确认，正在接续或落实；或 applied 但尚无 validation | 建立 validation、回滚或结束 | 3 |
 | 验证中 | VAL | validation pending/validating | proven、failed 或 inconclusive | 5 |
 | 待收尾 | VAL/ACT | 样本已达目标、期限到期、冲突证据或接续失败 | 用户确认继续、调整、固化或结束 | 3 |
-| 已暂缓 | CAN | 用户设置的 defer 仍有效 | 提醒到期后重新进入待决策，或用户提前恢复 | 不计 WIP |
-| 已结束 | 任意 | completed/rejected/superseded/rolled_back/proven 等终态 | 只保留近期窗口 | 不计 WIP |
+| 完成 | 任意 | completed/rejected/superseded/rolled_back/proven/failed/inconclusive 等终态 | 只保留近期窗口 | 不计 WIP |
+
+有效 defer 的候选保留在“改进追踪”中，但不是 Board 泳道；`handoff_pending` 也是接续状态，
+不是泳道。Board 固定为上述五列，不恢复“做梦中”“待接续”“已暂缓”或“已结束”列。
 
 WIP 数量必须按主卡去重。Dream 运行过程在独立“梦境”页面观察，不占改进承诺 WIP；尚未被
 用户拉入试用的候选是 Inbox，也不占 WIP。默认限制是建议值，不是强制政策；用户可以超限，
@@ -125,7 +127,7 @@ Codex 处理”指令，不自行执行建议。
 
 1. 用户在 Codex 中开始一次 Dream，确认 user anchor、范围和排除项。
 2. Dream 运行状态和历史留在“梦境”页面，不占改进承诺 WIP。
-3. Dream 完成后，新候选进入“待决策 Inbox”，并保留来源 Dream。
+3. Dream 完成后，新候选进入“待决策”，并保留来源 Dream。
 4. 用户打开 Console，先看到 WIP 总览、最老卡片和最多三个确定性建议。
 5. 用户按价值/影响面、提出时间或 Dream 提及次数排序，并结合项目/范围筛选。
 6. 用户打开卡片详情，查看状态时间线、证据、反例、成功标准、范围和下一步后果。
@@ -137,7 +139,7 @@ Codex 处理”指令，不自行执行建议。
 8. 进入试用后，Console 生成 handoff 并进入“试用落实”；Codex 领取后建立 Adoption 和 Validation，并回写结果。
 9. 后续 Dream 将新证据追加到 Validation；Board 更新样本进度、正反证据和阶段年龄。
 10. 达到目标、到期或出现冲突信号时，卡片进入“待收尾”，而不是无限留在“验证中”。
-11. 用户选择继续、调整、固化或结束；最终决定必须可追溯，卡片才进入“已结束”。
+11. 用户选择继续、调整、固化或结束；最终决定必须可追溯，卡片才进入“完成”。
 12. 首页持续展示采纳与完成的流量差，帮助用户在开始新试用前管理已有承诺。
 
 ## 7. 用户故事与迭代顺序
