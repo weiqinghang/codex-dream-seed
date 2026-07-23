@@ -13,12 +13,12 @@ import time
 import webbrowser
 from datetime import date, datetime, timedelta, timezone
 from http import HTTPStatus
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
 from typing import Any, Sequence
 from urllib.parse import parse_qs, urlparse
-from urllib.request import urlopen
 
 from .database import (
     begin_user_action,
@@ -1473,15 +1473,22 @@ def console_status(workspace: Path) -> dict[str, Any]:
     alive = _pid_alive(pid)
     healthy = False
     if alive:
+        connection = None
         try:
-            with urlopen(str(record["url"]) + "/api/config", timeout=0.5) as response:
-                config = json.load(response)
-                healthy = bool(
-                    response.status == 200
-                    and config.get("fingerprint") == workspace_fingerprint(workspace)
-                )
+            parsed = urlparse(str(record["url"]))
+            connection = HTTPConnection(parsed.hostname, parsed.port, timeout=0.5)
+            connection.request("GET", "/api/config")
+            response = connection.getresponse()
+            config = json.loads(response.read().decode("utf-8"))
+            healthy = bool(
+                response.status == 200
+                and config.get("fingerprint") == workspace_fingerprint(workspace)
+            )
         except Exception:
             healthy = False
+        finally:
+            if connection is not None:
+                connection.close()
     return {
         "status": "running" if healthy else ("unhealthy" if alive else "stale_pid"),
         "running": healthy,
