@@ -527,7 +527,9 @@ class ConsoleServiceTests(unittest.TestCase):
         connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1])
         try:
             connection.request("GET", "/api/overview")
-            self.assertEqual(connection.getresponse().status, 200)
+            overview_response = connection.getresponse()
+            self.assertEqual(overview_response.status, 200)
+            overview_response.read()
             connection.request("GET", "/api/board")
             board_response = connection.getresponse()
             self.assertEqual(board_response.status, 200)
@@ -547,7 +549,9 @@ class ConsoleServiceTests(unittest.TestCase):
                 body=body,
                 headers={"Content-Type": "application/json"},
             )
-            self.assertEqual(connection.getresponse().status, 403)
+            forbidden_response = connection.getresponse()
+            self.assertEqual(forbidden_response.status, 403)
+            forbidden_response.read()
             connection.request(
                 "POST",
                 "/api/candidate-actions",
@@ -557,12 +561,15 @@ class ConsoleServiceTests(unittest.TestCase):
                     "X-Dream-Token": "synthetic-token",
                 },
             )
-            self.assertEqual(connection.getresponse().status, 201)
+            created_response = connection.getresponse()
+            self.assertEqual(created_response.status, 201)
+            created_response.read()
         finally:
             connection.close()
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
 
     def test_dialog_close_controls_cannot_submit_a_decision(self):
         static_root = Path(__file__).parents[1] / "codex_dream" / "console_static"
