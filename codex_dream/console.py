@@ -1533,7 +1533,10 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
         json.dumps({"pid": process.pid, "url": url, "started_at": datetime.now(timezone.utc).isoformat()}, sort_keys=True),
         encoding="utf-8",
     )
-    deadline = time.monotonic() + 4
+    # Hosted macOS and Windows runners can take several seconds to import the
+    # service module under load. Keep the user-facing start bounded without
+    # treating a slow-but-healthy launch as a failure.
+    deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         current = console_status(workspace)
         if current.get("running"):
@@ -1545,7 +1548,14 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
         if process.poll() is not None:
             break
         time.sleep(0.1)
-    if runtime.exists() and process.poll() is not None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+    if runtime.exists():
         runtime.unlink()
     raise ConsoleError(f"Console did not start; inspect {log_path}")
 

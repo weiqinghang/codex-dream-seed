@@ -30,8 +30,20 @@ class ConsoleRuntimeTests(unittest.TestCase):
             pass
         self.temp.cleanup()
 
+    def start(self):
+        try:
+            return start_console(self.workspace, "127.0.0.1", self.port, False)
+        except ConsoleError as error:
+            log = self.workspace / "state/private/console-service.log"
+            diagnostic = (
+                log.read_text(encoding="utf-8", errors="replace")
+                if log.is_file()
+                else "<missing service log>"
+            )
+            self.fail(f"{error}\nSynthetic service log:\n{diagnostic}")
+
     def test_start_status_duplicate_start_and_stop_are_deterministic(self):
-        started = start_console(self.workspace, "127.0.0.1", self.port, False)
+        started = self.start()
         self.assertTrue(started["running"])
         duplicate = start_console(self.workspace, "127.0.0.1", self.port, False)
         self.assertTrue(duplicate["already_running"])
@@ -54,7 +66,7 @@ class ConsoleRuntimeTests(unittest.TestCase):
         self.assertFalse(runtime.exists())
 
     def test_abnormal_exit_is_reported_instead_of_claimed_running(self):
-        started = start_console(self.workspace, "127.0.0.1", self.port, False)
+        started = self.start()
         os.kill(int(started["pid"]), signal.SIGTERM)
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline and console_status(self.workspace)["status"] == "running":
