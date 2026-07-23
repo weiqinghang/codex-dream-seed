@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,6 +97,60 @@ class BootstrapTests(unittest.TestCase):
 
             self.assertEqual(plan["cli"]["installer"], "pip-user")
             self.assertIn("--user", plan["cli"]["command"])
+
+    def test_bootstrap_and_runtime_share_custom_dream_config_home(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            codex_home = root / "codex-home"
+            config_home = root / "dream-config"
+            with patch.dict(
+                os.environ, {"CODEX_DREAM_HOME": str(config_home)}, clear=False
+            ):
+                plan = build_plan(workspace, codex_home=codex_home)
+                result = apply_plan(plan, install_cli=False)
+
+            self.assertEqual(
+                Path(plan["default_pointer"]), config_home / "default-workspace"
+            )
+            self.assertEqual(result["default"]["workspace"], str(workspace))
+            self.assertEqual(
+                configured_default_workspace(config_home / "default-workspace"),
+                workspace,
+            )
+
+    def test_existing_v1_workspace_requires_migration_before_session_writes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace = root / "workspace"
+            codex_home = root / "codex-home"
+            (codex_home / "sessions").mkdir(parents=True)
+            initial = apply_plan(
+                build_plan(workspace, codex_home=codex_home),
+                install_cli=False,
+            )
+            self.assertEqual(initial["doctor"]["schema"]["status"], "current")
+
+            config = workspace / "dream.toml"
+            config.write_text(
+                config.read_text(encoding="utf-8").replace(
+                    "workspace_schema = 2", "workspace_schema = 1"
+                ),
+                encoding="utf-8",
+            )
+            (workspace / "state/dream.sqlite3").unlink()
+
+            result = apply_plan(
+                build_plan(workspace, codex_home=codex_home),
+                install_cli=False,
+            )
+
+            self.assertEqual(result["doctor"]["status"], "needs_attention")
+            self.assertEqual(
+                result["doctor"]["schema"]["status"], "migration_required"
+            )
+            self.assertIn("migration dry-run", result["next_step"])
+            self.assertFalse(result["preview"]["written"])
 
 
 if __name__ == "__main__":
