@@ -49,3 +49,19 @@ V0 denotes the original unversioned project workspace. V1:
 
 Ambiguous records require a private resolution file with a reason. Missing provenance is
 never fabricated merely to make migration succeed.
+
+## Workspace V1 to V2
+
+V2 changes the private runtime representation without changing knowledge schema V1:
+
+- imports session ledger records, review cards and task references into
+  `state/dream.sqlite3`;
+- enables WAL, foreign keys, integrity checking and transactional local writes;
+- introduces first-class `DREAM-*` cycles, run/task links and `ACT-*` user-action audit;
+- restores existing weekly reports as historical dream cycles without inventing scope;
+- moves the three source JSONL files to `state/legacy-v1/` in the target workspace;
+- keeps sanitized `knowledge/` and `reports/` as readable, Git-reviewable files.
+
+The source remains unchanged. SQLite and the archived JSONL counts must match before the
+target can pass verification. After cutover, SQLite is authoritative for private runtime
+state; the archived JSONL files are recovery evidence and are never dual-written.

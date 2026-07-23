@@ -14,6 +14,7 @@ from typing import Any, Sequence
 
 from .ledger import discover_sessions, load_ledger, pending_range, sync_ledger
 from .workspace import (
+    CONFIG_HOME_ENV,
     codex_home_from,
     configured_default_workspace,
     doctor_workspace,
@@ -61,11 +62,13 @@ def _tree_digest(root: Path) -> str | None:
 
 
 def _workspace_choice(
-    explicit: Path | None, codex_home: Path, home: Path | None = None
+    explicit: Path | None,
+    pointer: Path,
+    home: Path | None = None,
 ) -> tuple[Path, str]:
     if explicit is not None:
         return _absolute(explicit), "argument"
-    configured = configured_default_workspace(codex_home / "dream/default-workspace")
+    configured = configured_default_workspace(pointer)
     if configured is not None:
         return configured, "configured_default"
     return recommended_workspace(home), "recommended_default"
@@ -122,7 +125,11 @@ def build_plan(
 ) -> dict[str, Any]:
     root = _absolute(root or repository_root())
     codex_home = _absolute(codex_home or local_codex_home())
-    selected, source = _workspace_choice(workspace, codex_home, home)
+    config_home = Path(
+        os.environ.get(CONFIG_HOME_ENV, str(codex_home / "dream"))
+    ).expanduser()
+    pointer = _absolute(config_home / "default-workspace")
+    selected, source = _workspace_choice(workspace, pointer, home)
     selected = _absolute(selected)
     skill_source = root / "skills" / SKILL_NAME
     skill_target = codex_home / "skills" / SKILL_NAME
@@ -151,7 +158,7 @@ def build_plan(
         "workspace": str(selected),
         "workspace_source": source,
         "workspace_action": _workspace_action(selected),
-        "default_pointer": str(codex_home / "dream/default-workspace"),
+        "default_pointer": str(pointer),
         "cli": {"installer": installer, "command": command},
         "skill": {
             "source": str(skill_source),
@@ -199,7 +206,15 @@ def install_skill(source: Path, target: Path) -> str:
 def preview_sessions(workspace: Path, codex_home: Path, days: int = 30) -> dict[str, Any]:
     cutoff = time.time() - days * 24 * 60 * 60
     discovered = discover_sessions(codex_home, updated_after=cutoff)
-    existing = load_ledger(workspace / "state/session-ledger.jsonl")
+    from .database import database_path
+    from .schema import workspace_versions
+
+    ledger = (
+        database_path(workspace)
+        if workspace_versions(workspace)["workspace_schema"] >= 2
+        else workspace / "state/session-ledger.jsonl"
+    )
+    existing = load_ledger(ledger)
     records = sync_ledger(existing, discovered)
     pending = sum(
         1
@@ -253,6 +268,17 @@ def apply_plan(plan: dict[str, Any], install_cli: bool = True) -> dict[str, Any]
         configured_source = codex_home
     doctor = doctor_workspace(workspace, configured_source)
     preview = preview_sessions(workspace, configured_source, days=30)
+    if doctor["schema"]["status"] == "migration_required":
+        next_step = (
+            "Run the documented migration dry-run to a new target Workspace; "
+            "do not establish or write session state until migration and verification "
+            "succeed. Restart Codex after the migration and Skill upgrade."
+        )
+    else:
+        next_step = (
+            "Restart Codex, then confirm whether to establish the 30-day ledger; "
+            "the bootstrap preview did not write session state."
+        )
     return {
         "applied": True,
         "cli": cli_status,
@@ -261,10 +287,7 @@ def apply_plan(plan: dict[str, Any], install_cli: bool = True) -> dict[str, Any]
         "default": pointer_result,
         "doctor": doctor,
         "preview": preview,
-        "next_step": (
-            "Restart Codex, then confirm whether to establish the 30-day ledger; "
-            "the bootstrap preview did not write session state."
-        ),
+        "next_step": next_step,
     }
 
 

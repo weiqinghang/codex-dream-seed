@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 - 2026-07-23
+
+- Introduce Workspace Schema V2 with a transactional SQLite private runtime store while
+  preserving sanitized knowledge and reports as readable files.
+- Add source-preserving V1 to V2 migration, archived JSONL recovery evidence, historical
+  report import and database integrity/count verification.
+- Add first-class Dream cycles, task links and traceable local user-action audit records.
+- Deliver the five-state local Dream Console journey from first-run guidance through
+  human decisions, guarded Codex handoff, retry, validation and closeout.
+- Add fail-closed `ACT-*`/Workspace fingerprint/attempt checks, cross-process Workspace
+  locking, safe report reading and deterministic Console service management.
+- Add canonical Chinese-first operating guidance, partial-refresh recovery, responsive
+  browser behavior and synthetic end-to-end acceptance evidence.
+- Promote Python 3.9–3.13 on macOS, Linux and Windows as the tested support matrix.
+
 ## 0.3.0 - 2026-07-16
 
 - Add a cross-platform, read-only-by-default bootstrap for clone-time CLI installation,

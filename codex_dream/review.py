@@ -104,6 +104,11 @@ def _extract_rollout(path: Path, start_line: int = 1) -> dict[str, Any]:
 
 
 def _atomic_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    from .database import is_database_path, write_review_cards
+
+    if is_database_path(path):
+        write_review_cards(path, records)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -126,6 +131,10 @@ def _atomic_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 def _task_references(
     path: Path, review_unit_ids: list[str]
 ) -> dict[str, str]:
+    from .database import allocate_task_refs, is_database_path
+
+    if is_database_path(path):
+        return allocate_task_refs(path, review_unit_ids)
     existing: dict[str, str] = {}
     highest = 0
     if path.exists():
@@ -322,39 +331,46 @@ def checkpoint_review_cards(
                         observation_links.setdefault(evidence, []).append(observation_id)
     selected_trees = 0
     selected_rollouts = 0
-    with Path(cards_path).open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            card = json.loads(line)
-            if card.get("status") not in statuses:
-                continue
-            if card.get("task_ref") not in approved_task_refs:
-                continue
-            selected_trees += 1
-            summary = card.get("root_agent_final") or "No final response was recorded."
-            summary = _truncate(summary, 500)
-            capsule = (
-                f'{card["task_ref"]} reviewed as {card["status"]}. '
-                f'Title: {card.get("title") or "untitled"}. Outcome: {summary}'
+    from .database import is_database_path, load_review_cards
+
+    cards = (
+        load_review_cards(Path(cards_path))
+        if is_database_path(Path(cards_path))
+        else [
+            json.loads(line)
+            for line in Path(cards_path).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    )
+    for card in cards:
+        if card.get("status") not in statuses:
+            continue
+        if card.get("task_ref") not in approved_task_refs:
+            continue
+        selected_trees += 1
+        summary = card.get("root_agent_final") or "No final response was recorded."
+        summary = _truncate(summary, 500)
+        capsule = (
+            f'{card["task_ref"]} reviewed as {card["status"]}. '
+            f'Title: {card.get("title") or "untitled"}. Outcome: {summary}'
+        )
+        linked_observations = list(
+            dict.fromkeys(observation_links.get(card["task_ref"], []))
+        )
+        for session_id in card["session_ids"]:
+            record = records[session_id]
+            records[session_id] = checkpoint(
+                record,
+                int(record["last_seen_line_count"]),
+                capsule,
+                observation_ids=list(
+                    dict.fromkeys(
+                        list(record.get("observation_ids", []))
+                        + linked_observations
+                    )
+                ),
             )
-            linked_observations = list(
-                dict.fromkeys(observation_links.get(card["task_ref"], []))
-            )
-            for session_id in card["session_ids"]:
-                record = records[session_id]
-                records[session_id] = checkpoint(
-                    record,
-                    int(record["last_seen_line_count"]),
-                    capsule,
-                    observation_ids=list(
-                        dict.fromkeys(
-                            list(record.get("observation_ids", []))
-                            + linked_observations
-                        )
-                    ),
-                )
-                selected_rollouts += 1
+            selected_rollouts += 1
     write_ledger(Path(ledger_path), records)
     return {"rollouts": selected_rollouts, "task_trees": selected_trees}
 
@@ -379,10 +395,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         workspace, _ = resolve_workspace(args.workspace)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    ledger = args.ledger or workspace / "state/session-ledger.jsonl"
+    from .database import database_path
+    from .schema import workspace_versions
+
+    use_database = workspace_versions(workspace)["workspace_schema"] >= 2
+    default_store = database_path(workspace) if use_database else workspace / "state/session-ledger.jsonl"
+    ledger = args.ledger or default_store
     session_index = args.session_index or Path("~/.codex/session_index.jsonl").expanduser()
-    output_path = args.output or workspace / "state/review-cards.jsonl"
-    task_map = args.task_map or workspace / "state/task-ref-map.jsonl"
+    output_path = args.output or default_store
+    task_map = args.task_map or default_store
     result = build_review_cards(
         ledger,
         session_index,
