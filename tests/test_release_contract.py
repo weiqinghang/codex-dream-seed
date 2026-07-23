@@ -51,6 +51,12 @@ class ReleaseContractTests(unittest.TestCase):
 
         self.assertIn("当前稳定版本为 `0.4.0`", readme)
         self.assertIn("current stable release is `v0.4.0`", agents)
+        self.assertIn(
+            "python3 -m unittest tests.console_runtime_tests -v", agents
+        )
+        self.assertIn(
+            'python3 -m unittest discover -s tests -p "test_*.py" -v', agents
+        )
         self.assertRegex(changelog, r"## 0\.4\.0 - 2026-07-23")
         self.assertNotIn("尚未完成最终体验验收", experience)
         self.assertNotIn("开发线现已完成", experience)

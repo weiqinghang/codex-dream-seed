@@ -50,5 +50,6 @@ When the user asks to install, initialize, or start Dream from a fresh clone:
    ledger or read semantic session content until the user confirms the previewed scope.
 5. Tell the user to restart Codex after a new or upgraded Skill installation.
 
-Run `python3 -m unittest discover -s tests -v` and validate the bundled Skill
-before committing changes.
+Run `python3 -m unittest tests.console_runtime_tests -v`, then
+`python3 -m unittest discover -s tests -p "test_*.py" -v`, and validate the bundled
+Skill before committing changes.
