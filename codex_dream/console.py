@@ -1554,10 +1554,10 @@ def start_console(workspace: Path, host: str, port: int, open_browser: bool) -> 
         json.dumps({"pid": process.pid, "url": url, "started_at": datetime.now(timezone.utc).isoformat()}, sort_keys=True),
         encoding="utf-8",
     )
-    # Hosted macOS and Windows runners can take several seconds to import the
-    # service module under load. Keep the user-facing start bounded without
-    # treating a slow-but-healthy launch as a failure.
-    deadline = time.monotonic() + 15
+    # A cold hosted macOS runner can take well beyond 15 seconds to import a
+    # second Python process. Keep startup bounded, fail immediately if the
+    # child exits, and avoid treating a live slow launch as a crash.
+    deadline = time.monotonic() + 45
     current = status
     while time.monotonic() < deadline:
         current = console_status(workspace)
