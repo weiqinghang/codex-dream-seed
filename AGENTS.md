@@ -24,9 +24,9 @@ of real user sessions and previously generated dream results.
 - `product` is the stable distribution branch and the GitHub default branch.
 - `develop` is the active integration branch. It may contain incomplete, experimental,
   or not-yet-promoted behavior and is never the implicit installation source.
-- Stable releases are immutable annotated tags. The current stable release is `v0.3.0`
-  at commit `0d48bba`; the `0.4.0` line on `develop` remains development-only until it
-  passes an explicit promotion decision.
+- Stable releases are immutable annotated tags. The current stable release is `v0.4.0`;
+  its peeled tag commit must match `product`. The `develop` branch remains development-only
+  even when its package version is newer.
 - When a user asks to clone, install, initialize, upgrade, or start Dream without naming
   a channel, use the latest stable tag or `product`. Never select `develop` merely
   because it has the newest commit or the highest package version.

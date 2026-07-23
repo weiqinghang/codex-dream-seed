@@ -11,6 +11,20 @@ Do not infer outcomes from titles. Use the rollout events and, only when needed,
 project evidence such as instructions, diffs, tests and delivered artifacts. Preserve the
 historical distinction when current project state differs from what was true in the session.
 
+## User perception anchor
+
+Begin with the confirmed `user_anchor` from the Dream run scope. It is the primary hypothesis
+for allocating review attention, not a conclusion to prove. Look for supporting evidence,
+counterevidence, and missing evidence. Preserve the distinction between engineering completion
+and the user's acceptance surface, including time cost, detours, control, usability, and felt
+value.
+
+Classify the final relationship as `aligned`, `partially_aligned`, `conflicting`, or
+`insufficient_evidence`. When evidence conflicts with the user's experience, explain what each
+view measures instead of declaring either side wrong. Continue a bounded background scan for
+high-impact or chronic patterns outside the anchor; do not let an acute focus erase accumulated
+burden.
+
 ## Three finding types
 
 ### Effective practice

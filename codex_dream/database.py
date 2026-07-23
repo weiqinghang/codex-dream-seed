@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 
 DATABASE_NAME = "dream.sqlite3"
-DATABASE_SCHEMA_VERSION = 1
+DATABASE_SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -67,6 +67,22 @@ CREATE TABLE IF NOT EXISTS dream_runs (
     origin TEXT NOT NULL DEFAULT 'native'
 );
 CREATE INDEX IF NOT EXISTS dream_runs_started_idx ON dream_runs(started_at);
+
+CREATE TABLE IF NOT EXISTS dream_run_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES dream_runs(run_id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    status TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    details_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS dream_run_events_run_idx ON dream_run_events(run_id, event_id);
+
+CREATE TABLE IF NOT EXISTS console_settings (
+    key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS dream_run_tasks (
     run_id TEXT NOT NULL REFERENCES dream_runs(run_id) ON DELETE CASCADE,
@@ -138,6 +154,51 @@ def initialize(path: Path) -> None:
             "INSERT OR REPLACE INTO meta(key, value) VALUES('database_schema', ?)",
             (str(DATABASE_SCHEMA_VERSION),),
         )
+
+
+def get_console_setting(path: Path, key: str, default: Any = None) -> Any:
+    initialize(path)
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT value_json FROM console_settings WHERE key=?", (key,)
+        ).fetchone()
+    return json.loads(row["value_json"]) if row else default
+
+
+def set_console_setting(path: Path, key: str, value: Any) -> None:
+    initialize(path)
+    with open_database(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO console_settings(key, value_json, updated_at) VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at
+            """,
+            (key, json.dumps(value, ensure_ascii=False, sort_keys=True), _now()),
+        )
+
+
+def append_run_event(
+    path: Path, run_id: str, phase: str, status: str, details: dict[str, Any] | None = None
+) -> None:
+    initialize(path)
+    with open_database(path) as connection:
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, ?, ?, ?, ?)",
+            (run_id, phase, status, _now(), json.dumps(details or {}, ensure_ascii=False, sort_keys=True)),
+        )
+
+
+def list_run_events(path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
+    initialize(path)
+    sql = "SELECT * FROM dream_run_events"
+    params: tuple[Any, ...] = ()
+    if run_id:
+        sql += " WHERE run_id=?"
+        params = (run_id,)
+    sql += " ORDER BY event_id"
+    with open_database(path) as connection:
+        rows = connection.execute(sql, params).fetchall()
+    return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
 
 
 def load_sessions(path: Path) -> dict[str, dict[str, Any]]:
@@ -328,6 +389,157 @@ def list_runs(path: Path, limit: int = 100) -> list[dict[str, Any]]:
     ]
 
 
+def list_run_ids_by_task_refs(
+    path: Path, task_refs: Iterable[str]
+) -> dict[str, list[str]]:
+    """Return Dream lineage for private task references without exposing session IDs."""
+    initialize(path)
+    selected = tuple(sorted({str(value) for value in task_refs if str(value)}))
+    if not selected:
+        return {}
+    placeholders = ",".join("?" for _ in selected)
+    with open_database(path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT task_ref, run_id
+            FROM dream_run_tasks
+            WHERE task_ref IN ({placeholders})
+            ORDER BY run_id
+            """,
+            selected,
+        ).fetchall()
+    output: dict[str, list[str]] = {}
+    for row in rows:
+        output.setdefault(str(row["task_ref"]), []).append(str(row["run_id"]))
+    return output
+
+
+def validate_run_scope(scope: dict[str, Any] | None) -> dict[str, Any]:
+    """Require an explicit human focus response before a native Dream run starts."""
+    if not isinstance(scope, dict):
+        raise ValueError("dream run scope must be a JSON object")
+
+    anchor = scope.get("user_anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError(
+            "dream run scope requires user_anchor; ask for the user's recent "
+            "positive or negative experience before run-start"
+        )
+
+    status = anchor.get("status")
+    if status not in {"provided", "none"}:
+        raise ValueError("user_anchor.status must be 'provided' or 'none'")
+    if anchor.get("captured_from") != "user_response":
+        raise ValueError("user_anchor.captured_from must be 'user_response'")
+    if status == "none":
+        reason = anchor.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("a none user_anchor requires a non-empty reason")
+        return scope
+
+    required_fields = (
+        "project",
+        "stage",
+        "polarity",
+        "felt_result",
+        "expected_result",
+    )
+    missing = [
+        field
+        for field in required_fields
+        if not isinstance(anchor.get(field), str) or not anchor[field].strip()
+    ]
+    if missing:
+        raise ValueError(
+            "provided user_anchor requires non-empty fields: " + ", ".join(missing)
+        )
+    if anchor["polarity"] not in {"positive", "negative", "mixed"}:
+        raise ValueError(
+            "user_anchor.polarity must be 'positive', 'negative', or 'mixed'"
+        )
+    return scope
+
+
+def validate_run_summary(
+    scope: dict[str, Any],
+    summary: dict[str, Any] | None,
+    linked_task_refs: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Require a structured reconciliation for the human focus captured at run start."""
+    if not isinstance(summary, dict):
+        raise ValueError("dream run summary must be a JSON object")
+    result = summary.get("user_anchor_result")
+    if not isinstance(result, dict):
+        raise ValueError("dream run summary requires user_anchor_result")
+
+    anchor = scope.get("user_anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError(
+            "dream run scope has no user_anchor; start a new Dream run under the current contract"
+        )
+    if anchor["status"] == "none":
+        if result.get("status") != "not_applicable":
+            raise ValueError(
+                "a none user_anchor requires user_anchor_result.status 'not_applicable'"
+            )
+        reason = result.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("a not_applicable user_anchor_result requires a reason")
+        return summary
+
+    status = result.get("status")
+    allowed_statuses = {
+        "aligned",
+        "partially_aligned",
+        "conflicting",
+        "insufficient_evidence",
+    }
+    if status not in allowed_statuses:
+        raise ValueError(
+            "user_anchor_result.status must be aligned, partially_aligned, "
+            "conflicting, or insufficient_evidence"
+        )
+
+    evidence: dict[str, list[str]] = {}
+    for field in ("supporting_task_refs", "counterevidence_task_refs"):
+        task_refs = result.get(field)
+        if not isinstance(task_refs, list) or any(
+            not isinstance(task_ref, str) or not task_ref.strip()
+            for task_ref in task_refs
+        ):
+            raise ValueError(f"user_anchor_result.{field} must be a list of TASK references")
+        if len(task_refs) != len(set(task_refs)):
+            raise ValueError(f"user_anchor_result.{field} must not contain duplicates")
+        evidence[field] = task_refs
+
+    linked = set(linked_task_refs)
+    unknown = sorted(
+        (set(evidence["supporting_task_refs"]) | set(evidence["counterevidence_task_refs"]))
+        - linked
+    )
+    if unknown:
+        raise ValueError(
+            "user_anchor_result references tasks not linked to this Dream run: "
+            + ", ".join(unknown)
+        )
+
+    evidence_gap = result.get("evidence_gap")
+    if not isinstance(evidence_gap, str):
+        raise ValueError("user_anchor_result.evidence_gap must be a string")
+    if status == "aligned" and not evidence["supporting_task_refs"]:
+        raise ValueError("an aligned user_anchor_result requires supporting_task_refs")
+    if status in {"partially_aligned", "conflicting"} and (
+        not evidence["supporting_task_refs"]
+        or not evidence["counterevidence_task_refs"]
+    ):
+        raise ValueError(
+            f"a {status} user_anchor_result requires both supporting and counterevidence TASK refs"
+        )
+    if status == "insufficient_evidence" and not evidence_gap.strip():
+        raise ValueError("an insufficient_evidence user_anchor_result requires an evidence_gap")
+    return summary
+
+
 def create_run(
     path: Path, title: str, scope: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -335,6 +547,7 @@ def create_run(
     title = title.strip()
     if not title:
         raise ValueError("dream run title is required")
+    scope = validate_run_scope(scope)
     started_at = _now()
     with open_database(path) as connection:
         values = [
@@ -349,7 +562,11 @@ def create_run(
                 run_id, status, started_at, title, scope_json, summary_json, origin
             ) VALUES (?, 'active', ?, ?, ?, '{}', 'native')
             """,
-            (run_id, started_at, title, json.dumps(scope or {}, ensure_ascii=False, sort_keys=True)),
+            (run_id, started_at, title, json.dumps(scope, ensure_ascii=False, sort_keys=True)),
+        )
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'scope', 'completed', ?, '{}')",
+            (run_id, started_at),
         )
     return {"run_id": run_id, "status": "active", "started_at": started_at, "title": title}
 
@@ -379,6 +596,10 @@ def link_run_tasks(path: Path, run_id: str, task_refs: Iterable[str]) -> int:
                 (run_id, row["review_unit_id"], task_ref),
             )
             linked += max(cursor.rowcount, 0)
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'review', 'active', ?, ?)",
+            (run_id, _now(), json.dumps({"linked_tasks": linked}, sort_keys=True)),
+        )
     return linked
 
 
@@ -392,12 +613,22 @@ def complete_run(
     completed_at = _now()
     with open_database(path) as connection:
         row = connection.execute(
-            "SELECT status FROM dream_runs WHERE run_id=?", (run_id,)
+            "SELECT status, scope_json FROM dream_runs WHERE run_id=?", (run_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"unknown dream run: {run_id}")
         if row["status"] != "active":
             raise ValueError("only an active dream run can be completed")
+        linked_task_refs = [
+            linked["task_ref"]
+            for linked in connection.execute(
+                "SELECT task_ref FROM dream_run_tasks WHERE run_id=? AND task_ref IS NOT NULL",
+                (run_id,),
+            )
+        ]
+        summary = validate_run_summary(
+            json.loads(row["scope_json"]), summary, linked_task_refs
+        )
         connection.execute(
             """
             UPDATE dream_runs
@@ -407,7 +638,7 @@ def complete_run(
             (
                 completed_at,
                 report_path,
-                json.dumps(summary or {}, ensure_ascii=False, sort_keys=True),
+                json.dumps(summary, ensure_ascii=False, sort_keys=True),
                 run_id,
             ),
         )
@@ -415,7 +646,51 @@ def complete_run(
             "UPDATE dream_run_tasks SET status='reviewed' WHERE run_id=?",
             (run_id,),
         )
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'closeout', 'completed', ?, '{}')",
+            (run_id, completed_at),
+        )
     return {"run_id": run_id, "status": "completed", "completed_at": completed_at}
+
+
+def fail_run(path: Path, run_id: str, error: str) -> dict[str, Any]:
+    initialize(path)
+    reason = error.strip()
+    if not reason:
+        raise ValueError("run failure reason is required")
+    occurred_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute("SELECT status FROM dream_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"unknown dream run: {run_id}")
+        if row["status"] != "active":
+            raise ValueError("only an active dream run can fail")
+        connection.execute("UPDATE dream_runs SET status='failed' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'run', 'failed', ?, ?)",
+            (run_id, occurred_at, json.dumps({"error": reason}, ensure_ascii=False, sort_keys=True)),
+        )
+    return {"run_id": run_id, "status": "failed", "failed_at": occurred_at}
+
+
+def resume_run(path: Path, run_id: str, reason: str) -> dict[str, Any]:
+    initialize(path)
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("run resume reason is required")
+    occurred_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute("SELECT status FROM dream_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"unknown dream run: {run_id}")
+        if row["status"] != "failed":
+            raise ValueError("only a failed dream run can resume")
+        connection.execute("UPDATE dream_runs SET status='active' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "INSERT INTO dream_run_events(run_id, phase, status, occurred_at, details_json) VALUES(?, 'recovery', 'active', ?, ?)",
+            (run_id, occurred_at, json.dumps({"reason": reason}, ensure_ascii=False, sort_keys=True)),
+        )
+    return {"run_id": run_id, "status": "active", "resumed_at": occurred_at}
 
 
 def begin_user_action(
@@ -450,24 +725,183 @@ def begin_user_action(
 def finish_user_action(
     path: Path, action_id: str, status: str, error: str | None = None
 ) -> None:
+    transition_user_action(path, action_id, status, error=error)
+
+
+def transition_user_action(
+    path: Path,
+    action_id: str,
+    status: str,
+    *,
+    error: str | None = None,
+    payload_update: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Move a traced user action through the Console -> Codex handoff lifecycle."""
     initialize(path)
     numeric_id = int(action_id.split("-", 1)[1])
     with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT * FROM user_actions WHERE action_id=?", (numeric_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        payload = json.loads(row["payload_json"])
+        payload.update(payload_update or {})
+        completed_at = _now() if status in {"completed", "failed", "cancelled"} else None
         connection.execute(
             """
-            UPDATE user_actions SET status=?, error=?, completed_at=?
+            UPDATE user_actions
+            SET status=?, error=?, payload_json=?, completed_at=?
             WHERE action_id=?
             """,
-            (status, error, _now(), numeric_id),
+            (
+                status,
+                error,
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                completed_at,
+                numeric_id,
+            ),
         )
+    return get_user_action(path, action_id)
 
 
-def list_user_actions(path: Path, limit: int = 50) -> list[dict[str, Any]]:
+def get_user_action(path: Path, action_id: str) -> dict[str, Any]:
     initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
     with open_database(path) as connection:
-        rows = connection.execute(
-            "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        row = connection.execute(
+            "SELECT * FROM user_actions WHERE action_id=?", (numeric_id,)
+        ).fetchone()
+    if row is None:
+        raise ValueError(f"unknown user action: {action_id}")
+    return {
+        **dict(row),
+        "action_id": f"ACT-{int(row['action_id']):06d}",
+        "payload": json.loads(row["payload_json"]),
+    }
+
+
+def claim_user_action(path: Path, action_id: str) -> dict[str, Any]:
+    """Atomically acknowledge one pending handoff on behalf of Codex."""
+    initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
+    claimed_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT payload_json, status FROM user_actions WHERE action_id=?",
+            (numeric_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        if row["status"] != "handoff_pending":
+            raise ValueError(
+                f"user action is {row['status']}; only handoff_pending can be claimed"
+            )
+        payload = json.loads(row["payload_json"])
+        payload["claimed_at"] = claimed_at
+        cursor = connection.execute(
+            """
+            UPDATE user_actions SET status='claimed', payload_json=?
+            WHERE action_id=? AND status='handoff_pending'
+            """,
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), numeric_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("handoff was claimed concurrently")
+    return get_user_action(path, action_id)
+
+
+def retry_user_action(
+    path: Path,
+    action_id: str,
+    reason: str,
+    source: str,
+    request_id: str,
+) -> dict[str, Any]:
+    """Atomically requeue one failed handoff while preserving every attempt."""
+    if len(reason.strip()) < 3:
+        raise ValueError("retry reason must contain at least 3 characters")
+    if not source.strip():
+        raise ValueError("retry source is required")
+    if not request_id.strip():
+        raise ValueError("retry request_id is required")
+    initialize(path)
+    numeric_id = int(action_id.split("-", 1)[1])
+    retried_at = _now()
+    with open_database(path) as connection:
+        row = connection.execute(
+            "SELECT payload_json, status, error, completed_at FROM user_actions WHERE action_id=?",
+            (numeric_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"unknown user action: {action_id}")
+        payload = json.loads(row["payload_json"])
+        retries = list(payload.get("retry_history") or [])
+        if any(value.get("request_id") == request_id for value in retries):
+            raise ValueError("duplicate retry request")
+        if row["status"] != "failed":
+            raise ValueError(
+                f"user action is {row['status']}; only failed handoffs can be retried"
+            )
+        attempt = int(payload.get("attempt") or 1)
+        attempts = list(payload.get("attempt_history") or [])
+        attempts.append(
+            {
+                "attempt": attempt,
+                "status": "failed",
+                "error": row["error"],
+                "failed_at": row["completed_at"],
+                "claimed_at": payload.get("claimed_at"),
+            }
+        )
+        retry = {
+            "request_id": request_id,
+            "reason": reason.strip(),
+            "source": source.strip(),
+            "retried_at": retried_at,
+            "from_attempt": attempt,
+            "to_attempt": attempt + 1,
+        }
+        retries.append(retry)
+        payload.update(
+            {
+                "attempt": attempt + 1,
+                "attempt_history": attempts,
+                "retry_history": retries,
+                "latest_retry_at": retried_at,
+                "claimed_at": None,
+            }
+        )
+        cursor = connection.execute(
+            """
+            UPDATE user_actions
+            SET status='handoff_pending', error=NULL, payload_json=?, completed_at=NULL
+            WHERE action_id=? AND status='failed'
+            """,
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), numeric_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("handoff retry conflicted with another writer")
+    return get_user_action(path, action_id)
+
+
+def list_user_actions(
+    path: Path, limit: int = 50, statuses: Iterable[str] | None = None
+) -> list[dict[str, Any]]:
+    initialize(path)
+    selected = tuple(sorted(set(statuses or ())))
+    with open_database(path) as connection:
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            rows = connection.execute(
+                f"SELECT * FROM user_actions WHERE status IN ({placeholders}) "
+                "ORDER BY action_id DESC LIMIT ?",
+                (*selected, limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
+            ).fetchall()
     return [
         {
             **dict(row),

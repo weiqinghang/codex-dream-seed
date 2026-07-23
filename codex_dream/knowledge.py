@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
+from .locking import workspace_write_lock
 from .schema import CURRENT_KNOWLEDGE_SCHEMA
 from .workspace import resolve_workspace
 
@@ -335,6 +336,39 @@ def record_event(
         validation["status"] = status
         validation["status_reason"] = payload.get("reason")
         validation["status_updated_at"] = timestamp
+    elif event_type == "validation_criteria_assessed":
+        _require_fields(
+            payload,
+            {"validation_id", "criterion_index", "assessment", "reason", "decision_source"},
+            "validation criterion assessment",
+        )
+        if payload["assessment"] not in {"met", "not_met", "unknown"}:
+            raise ValueError("unsupported criterion assessment")
+        validation = _find(item["validations"], "validation_id", payload["validation_id"])
+        criteria = validation["contract"].get("success_criteria", [])
+        index_value = payload["criterion_index"]
+        if not isinstance(index_value, int) or not 0 <= index_value < len(criteria):
+            raise ValueError("criterion_index is outside the validation contract")
+        assessments = validation.setdefault("criterion_assessments", [])
+        assessments[:] = [value for value in assessments if value.get("criterion_index") != index_value]
+        payload.setdefault("assessed_at", timestamp)
+        assessments.append(payload)
+        validation["status_updated_at"] = timestamp
+    elif event_type == "validation_contract_adjusted":
+        _require_fields(payload, {"validation_id", "contract", "reason", "decision_source"}, "validation contract adjustment")
+        contract = payload["contract"]
+        if not isinstance(contract, dict):
+            raise ValueError("validation contract must be an object")
+        _require_fields(contract, VALIDATION_CONTRACT_FIELDS, "validation contract")
+        if not isinstance(contract["eligible_sessions_target"], int) or contract["eligible_sessions_target"] < 1:
+            raise ValueError("eligible_sessions_target must be a positive integer")
+        if not isinstance(contract["max_validation_days"], int) or contract["max_validation_days"] < 1:
+            raise ValueError("max_validation_days must be a positive integer")
+        validation = _find(item["validations"], "validation_id", payload["validation_id"])
+        validation.setdefault("contract_history", []).append({"contract": validation["contract"], "replaced_at": timestamp, "reason": payload["reason"], "decision_source": payload["decision_source"]})
+        validation["contract"] = contract
+        validation["status"] = "validating"
+        validation["status_updated_at"] = timestamp
     elif event_type == "summary_updated":
         item["summary"] = payload["summary"]
         if "next_action" in payload:
@@ -441,7 +475,14 @@ def render_lifecycle(item: dict[str, Any]) -> str:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage Codex Dream knowledge lifecycles.")
     parser.add_argument("--workspace", type=Path, default=None)
-    parser.add_argument("--root", type=Path, default=None)
+    parser.add_argument(
+        "--root", type=Path, default=None,
+        help="Legacy/debug escape hatch for a non-canonical knowledge root",
+    )
+    parser.add_argument(
+        "--allow-legacy-root", action="store_true",
+        help="Required acknowledgment when using --root",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create")
@@ -465,7 +506,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.root is not None:
+        if not args.allow_legacy_root:
+            raise SystemExit(
+                "--root is a legacy/debug escape hatch; pass --allow-legacy-root "
+                "to acknowledge the parallel-fact-source risk"
+            )
         root = args.root.expanduser()
+        workspace = root.parent
     else:
         try:
             workspace, _ = resolve_workspace(args.workspace)
@@ -473,7 +520,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise SystemExit(str(error)) from error
         root = workspace / "knowledge"
     if args.command == "create":
-        item = create_knowledge(root, args.title, args.kind, args.scope, args.summary)
+        with workspace_write_lock(workspace):
+            item = create_knowledge(root, args.title, args.kind, args.scope, args.summary)
         print(json.dumps(item, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "event":
@@ -481,7 +529,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             data = json.load(sys.stdin)
         else:
             data = json.loads(Path(args.data_file).read_text(encoding="utf-8"))
-        event = record_event(root, args.knowledge_id, args.type, data)
+        with workspace_write_lock(workspace):
+            event = record_event(root, args.knowledge_id, args.type, data)
         print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "show":

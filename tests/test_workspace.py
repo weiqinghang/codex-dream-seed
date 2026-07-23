@@ -12,10 +12,21 @@ from codex_dream.workspace import (
     load_config,
     resolve_workspace,
     set_default_workspace,
+    workspace_fingerprint,
 )
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_workspace_fingerprint_is_stable_across_symlink_aliases(self):
+        if os.name == "nt":
+            self.skipTest("symlink creation is not reliably available on Windows")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "dream"
+            alias = Path(temporary) / "alias"
+            init_workspace(root)
+            alias.symlink_to(root, target_is_directory=True)
+            self.assertEqual(workspace_fingerprint(root), workspace_fingerprint(alias))
+
     def test_initializes_idempotent_private_and_shareable_layout(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "dream"
