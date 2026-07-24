@@ -52,6 +52,19 @@ class ReleaseContractTests(unittest.TestCase):
         self.assertIn("当前稳定版本为 `0.4.0`", readme)
         self.assertIn("current stable release is `v0.4.0`", agents)
         self.assertIn(
+            "Repository-operations-only commits may advance `product`",
+            agents,
+        )
+        self.assertIn("仓库运营提交可以推进 `product`", readme)
+        self.assertNotIn(
+            "its peeled tag commit must match `product`",
+            agents,
+        )
+        self.assertNotIn(
+            "`v0.4.0` 是与 `product` 同一提交的不可变稳定 tag",
+            readme,
+        )
+        self.assertIn(
             "python3 -m unittest tests.console_runtime_tests -v", agents
         )
         self.assertIn(
