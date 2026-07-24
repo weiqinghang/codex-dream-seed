@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible, sanitized Codex Dream defect
+title: "缺陷："
+labels:
+  - "type::bug"
+  - "workflow::backlog"
+  - "backlog::idea"
+  - "sizing::standard"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先移除真实 Session、梦境、知识、UUID、绝对路径、密钥与私有 Workspace 原文。默认 Sizing 仅用于建卡，维护者会在分诊时确认。
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: 简述故障和用户可见影响。
+    validations:
+      required: true
+  - type: textarea
+    id: why_now
+    attributes:
+      label: Why Now
+      description: 说明严重度、频率、受影响范围或回归风险。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: 使用合成或已脱敏数据给出最小复现、预期结果和实际结果。
+    validations:
+      required: true
+  - type: textarea
+    id: scope_in
+    attributes:
+      label: Scope In
+      description: 本次修复必须覆盖的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: scope_out
+    attributes:
+      label: Scope Out
+      description: 本次明确不修复或不改变的行为。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: 给出可观察、可验证的修复与防回归标准。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification Plan
+      description: 说明复现、自动测试、人工检查和必要的兼容性验证。
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy / Data Boundary
+      description: 说明 fixture 是否纯合成，以及哪些信息不得上传。
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility / Release Impact
+      description: 说明版本、Schema、安装渠道、系统或 Python 兼容性影响。
+    validations:
+      required: true
+  - type: textarea
+    id: spec_plan
+    attributes:
+      label: Spec / Plan
+      description: Standard/Heavy 必须提供修复方案或链接；Micro 写明不需要的理由。
+    validations:
+      required: true

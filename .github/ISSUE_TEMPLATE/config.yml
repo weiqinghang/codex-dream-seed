@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Requirements governance contract
+    url: https://github.com/weiqinghang/codex-dream-seed/blob/product/docs/project/requirements-governance.md
+    about: Read the lifecycle, sizing, privacy, and acceptance rules before filing.
