@@ -70,7 +70,10 @@ workspace 即可。
 ## 稳定渠道与开发渠道
 
 - `product` 是默认分支和稳定安装源；未指定渠道时 clone 它或使用最新稳定 tag。
-- `v0.4.0` 是与 `product` 同一提交的不可变稳定 tag。
+- `v0.4.0` 是当前产品代码的不可变稳定 tag。
+- 仓库运营提交可以推进 `product`，以启用 Issue Forms 等默认分支能力，但只要它不改变
+  package、运行时、bundled Skill、Schema 或 Workspace 行为，就不会移动既有稳定 tag，
+  也不构成新的 Dream 产品发布。
 - `develop` 只用于明确要求 preview/pre-release 的开发者，不是普通用户的安装源。
 
 普通用户不需要判断分支：从仓库默认页 clone 后按下一节让 Codex 执行 bootstrap 即可。

@@ -24,16 +24,20 @@ of real user sessions and previously generated dream results.
 - `product` is the stable distribution branch and the GitHub default branch.
 - `develop` is the active integration branch. It may contain incomplete, experimental,
   or not-yet-promoted behavior and is never the implicit installation source.
-- Stable releases are immutable annotated tags. The current stable release is `v0.4.0`;
-  its peeled tag commit must match `product`. The `develop` branch remains development-only
-  even when its package version is newer.
+- Stable product releases are immutable annotated tags. The current stable release is `v0.4.0`.
+  A product-code promotion must advance `product` and create a matching new tag.
+  Repository-operations-only commits may advance `product` without moving an existing
+  stable tag when they do not change the package, runtime, bundled Skill, schemas, or
+  Workspace behavior. The `develop` branch remains development-only even when its package
+  version is newer.
 - When a user asks to clone, install, initialize, upgrade, or start Dream without naming
   a channel, use the latest stable tag or `product`. Never select `develop` merely
   because it has the newest commit or the highest package version.
 - Use `develop` only when the user explicitly requests development, preview, or
   pre-release behavior. Do not recreate a `main` branch as an installation fallback.
-- Before promoting a new stable version, verify the complete supported OS/Python matrix,
-  update the documented version, advance `product`, and create a matching immutable tag.
+- Before promoting a new stable product version, verify the complete supported OS/Python
+  matrix, update the documented version, advance `product`, and create a matching
+  immutable tag. Do not use a repo-operations promotion to move or recreate that tag.
 
 ## Bootstrap and first run
 

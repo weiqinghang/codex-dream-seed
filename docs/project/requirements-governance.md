@@ -35,7 +35,10 @@ Session 与个人 Workspace 永远不属于这里。
 Skill、wheel、用户 Workspace、Knowledge Schema 或 Console。
 
 repo-operations 资产需要进入默认 `product` 分支，GitHub 表单才会生效；这不修改 package
-version、不创建稳定 tag，也不构成新的 Dream 产品发布。`develop` 仍是开发集成渠道。
+version、不移动或创建稳定 tag，也不构成新的 Dream 产品发布。因此纯 repo-operations
+提交可以使 `product` HEAD 位于当前稳定产品 tag 之后；该例外只适用于未改变 package、
+runtime、bundled Skill、Schema 或 Workspace 行为的提交。产品代码晋升仍必须创建与晋升
+提交匹配的新不可变 tag。`develop` 仍是开发集成渠道。
 
 ## Lifecycle
 
@@ -88,7 +91,7 @@ parked 项可不设，但需在 Issue 解释。Sizing 代表工作与风险轮�
 | NFR-RM-004 | GitHub 与仓库不含真实私有数据 | `RG-007` 命中且未人工排除 |
 | NFR-RM-005 | 日常维护成本保持最小 | 需要额外 Project、机器人或重复状态载体 |
 | NFR-RM-006 | 状态可从 GitHub 历史和 Writeback 恢复 | reopen 无原因或状态无法重建 |
-| NFR-RM-007 | repo-ops 不伪造产品发布 | package version 或稳定 tag 被改变 |
+| NFR-RM-007 | repo-ops 不伪造产品发布 | package/runtime/Skill/Schema/Workspace 被改变，或既有稳定 tag 被移动 |
 | NFR-RM-008 | 规则集中且可演进 | 出现多份互相冲突的权威契约 |
 | NFR-RM-009 | 治理不侵入 Dream 产品 | 资产进入包、Skill、Schema 或 Workspace |
 | NFR-RM-010 | 核心规则可迁移 | 离线规则直接依赖 GitHub 网络 |
