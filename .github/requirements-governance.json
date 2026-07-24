@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "activation": {
+    "minimum_pull_request": 4
+  },
+  "labels": {
+    "workflow": [
+      "workflow::backlog",
+      "workflow::ready",
+      "workflow::doing",
+      "workflow::verify",
+      "workflow::writeback",
+      "workflow::done"
+    ],
+    "backlog": [
+      "backlog::idea",
+      "backlog::shaping",
+      "backlog::ready-for-dev",
+      "backlog::parked"
+    ],
+    "sizing": [
+      "sizing::micro",
+      "sizing::standard",
+      "sizing::heavy"
+    ]
+  },
+  "ready": {
+    "workflow": "workflow::ready",
+    "contract_workflows": [
+      "workflow::ready",
+      "workflow::doing",
+      "workflow::verify",
+      "workflow::writeback",
+      "workflow::done"
+    ],
+    "backlog": "backlog::ready-for-dev",
+    "heading_levels": [
+      2,
+      3
+    ],
+    "required_headings": [
+      "Summary",
+      "Why Now",
+      "Scope In",
+      "Scope Out",
+      "Acceptance Criteria",
+      "Verification Plan",
+      "Privacy / Data Boundary",
+      "Compatibility / Release Impact"
+    ],
+    "spec_heading": "Spec / Plan",
+    "spec_required_for": [
+      "sizing::standard",
+      "sizing::heavy"
+    ],
+    "empty_values": [
+      "TBD",
+      "N/A",
+      "_No response_"
+    ]
+  },
+  "writeback": {
+    "marker": "<!-- requirements-writeback:v1 -->",
+    "required_headings": [
+      "Pull Request",
+      "Merge Commit",
+      "Acceptance Evidence",
+      "Verification",
+      "Residual Risks"
+    ]
+  }
+}
