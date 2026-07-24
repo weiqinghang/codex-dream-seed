@@ -1,0 +1,76 @@
+name: Product requirement
+description: Propose a durable Codex Dream product or repository requirement
+title: "需求："
+labels:
+  - "workflow::backlog"
+  - "backlog::idea"
+  - "sizing::standard"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GitHub Issue 是本仓库需求状态的唯一事实源。请使用产品化、脱敏描述；不要粘贴真实 Session、梦境、知识、UUID、绝对路径、密钥或私有 Workspace 原文。
+        新建卡默认按 Standard 进入 Backlog；维护者应在首次分诊时确认 Micro / Standard / Heavy。
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: 一句话说明需要建立或改变什么能力。
+    validations:
+      required: true
+  - type: textarea
+    id: why_now
+    attributes:
+      label: Why Now
+      description: 为什么现在需要跟踪；不做会产生什么影响。
+    validations:
+      required: true
+  - type: textarea
+    id: scope_in
+    attributes:
+      label: Scope In
+      description: 本需求明确包含的结果与边界。
+    validations:
+      required: true
+  - type: textarea
+    id: scope_out
+    attributes:
+      label: Scope Out
+      description: 本需求明确不包含的内容；没有时写“无，并说明原因”。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: 使用可观察、可验证的 AC-N-XX 条目。
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification Plan
+      description: 写出验收面、命令、人工检查或默认分支回读方式。
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy / Data Boundary
+      description: 说明数据来源、脱敏规则和禁止进入仓库/GitHub 的内容。
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility / Release Impact
+      description: 说明版本、Schema、安装渠道、系统或 Python 兼容性影响。
+    validations:
+      required: true
+  - type: textarea
+    id: spec_plan
+    attributes:
+      label: Spec / Plan
+      description: Standard/Heavy 必须提供完整方案或链接；Micro 写明不需要的理由。
+    validations:
+      required: true

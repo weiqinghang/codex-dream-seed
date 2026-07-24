@@ -53,3 +53,16 @@ When the user asks to install, initialize, or start Dream from a fresh clone:
 Run `python3 -m unittest tests.console_runtime_tests -v`, then
 `python3 -m unittest discover -s tests -p "test_*.py" -v`, and validate the bundled
 Skill before committing changes.
+
+## Repository requirements governance
+
+- GitHub Issue is the only status source for product requirements, defects, and
+  repository-operations work that must survive across tasks.
+- Follow `docs/project/requirements-governance.md` for lifecycle, sizing, privacy,
+  acceptance, writeback, and the explicitly excluded Playbook mechanisms.
+- Never put real sessions, dreams, knowledge, UUIDs, absolute user paths, secrets, or
+  private Workspace content in an Issue, PR, comment, fixture, or governance artifact.
+- Link PRs with `Related to #N`. Complete structured writeback and default-branch
+  readback before applying `workflow::done` and closing the Issue.
+- These governance assets are repository operations. Do not route them into the Dream
+  CLI, bundled Skill, Console, schemas, Workspace, package version, or stable tags.
