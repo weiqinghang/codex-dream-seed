@@ -2,7 +2,7 @@
 
 Related to #
 
-> 使用非关闭型 `Related to #N`。在默认分支验证、Writeback 和 `workflow::done` 前，不要使用 `Fixes` 或 `Closes`。
+> 使用非关闭型 `Related to #N`。在默认分支验证、Writeback 和 Project Status `Done` 前，不要使用 `Fixes` 或 `Closes`。
 
 ## Acceptance coverage
 
@@ -27,4 +27,4 @@ Related to #
 ## Writeback
 
 - [ ] 合并后会在 Issue 使用 `requirements-writeback:v1` 结构化评论回写 PR、merge commit、Acceptance 证据、验证和残余风险
-- [ ] 默认分支回读完成后，才会设置 `workflow::done` 并人工关闭 Issue
+- [ ] 默认分支和唯一 Lifecycle Board 回读完成后，才会把 Project Status 移到 `Done` 并人工关闭 Issue

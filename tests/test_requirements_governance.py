@@ -11,6 +11,44 @@ from scripts.audit_requirements_governance import audit_snapshot
 ROOT = Path(__file__).parents[1]
 AUDITOR = ROOT / "scripts/audit_requirements_governance.py"
 MANIFEST = ROOT / ".github/requirements-governance.json"
+PROJECT_STATUSES = [
+    "Backlog",
+    "Ready",
+    "Doing",
+    "Verify",
+    "Writeback",
+    "Done",
+]
+
+
+def project(**overrides):
+    value = {
+        "owner": "weiqinghang",
+        "number": 4,
+        "title": "Codex Dream Requirements",
+        "url": "https://github.com/users/weiqinghang/projects/4",
+        "repositories": ["weiqinghang/codex-dream-seed"],
+        "status_field": {
+            "name": "Status",
+            "options": PROJECT_STATUSES,
+        },
+        "views": [
+            {
+                "name": "Lifecycle Board",
+                "layout": "BOARD",
+            }
+        ],
+    }
+    value.update(overrides)
+    return value
+
+
+def snapshot(*, issues=None, pull_requests=None, project_value=None):
+    return {
+        "project": project() if project_value is None else project_value,
+        "issues": issues or [],
+        "pull_requests": pull_requests or [],
+    }
 
 
 def requirement_body(heading_level=2, **overrides):
@@ -35,6 +73,7 @@ def issue(
     number=42,
     state="OPEN",
     labels=None,
+    project_statuses=None,
     body=None,
     comments=None,
 ):
@@ -44,10 +83,12 @@ def issue(
         "state": state,
         "labels": labels
         or [
-            "workflow::ready",
             "backlog::ready-for-dev",
             "sizing::standard",
         ],
+        "project_statuses": (
+            ["Ready"] if project_statuses is None else project_statuses
+        ),
         "body": body or requirement_body(),
         "comments": comments or [],
     }
@@ -87,9 +128,9 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
         }
 
     def test_valid_ready_issue_and_linked_pr_pass(self):
-        snapshot = {
-            "issues": [issue()],
-            "pull_requests": [
+        value = snapshot(
+            issues=[issue()],
+            pull_requests=[
                 {
                     "number": 43,
                     "state": "OPEN",
@@ -97,16 +138,55 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
                     "merged_commit": None,
                 }
             ],
-        }
-        self.assertEqual(audit_snapshot(snapshot, self.manifest)["findings"], [])
+        )
+        self.assertEqual(audit_snapshot(value, self.manifest)["findings"], [])
 
-        snapshot["issues"][0]["body"] = requirement_body(heading_level=3)
-        self.assertEqual(audit_snapshot(snapshot, self.manifest)["findings"], [])
+        value["issues"][0]["body"] = requirement_body(heading_level=3)
+        self.assertEqual(audit_snapshot(value, self.manifest)["findings"], [])
+
+    def test_project_status_is_the_single_workflow_authority(self):
+        for statuses, labels in (
+            ([], ["backlog::idea", "sizing::micro"]),
+            (["Unknown"], ["backlog::idea", "sizing::micro"]),
+            (["Backlog", "Ready"], ["backlog::idea", "sizing::micro"]),
+            (
+                ["Backlog"],
+                ["workflow::backlog", "backlog::idea", "sizing::micro"],
+            ),
+        ):
+            with self.subTest(statuses=statuses, labels=labels):
+                invalid = issue(
+                    project_statuses=statuses,
+                    labels=labels,
+                )
+                self.assertEqual(
+                    self.rule_ids(snapshot(issues=[invalid])),
+                    {"RG-001"},
+                )
+
+    def test_project_contract_requires_one_linked_lifecycle_board(self):
+        invalid_project = project(
+            title="Another project",
+            repositories=[],
+            status_field={"name": "Status", "options": ["Todo", "Done"]},
+            views=[
+                {"name": "Discovery", "layout": "BOARD"},
+                {"name": "Delivery", "layout": "BOARD"},
+            ],
+        )
+        self.assertEqual(
+            self.rule_ids(
+                snapshot(
+                    issues=[issue()],
+                    project_value=invalid_project,
+                )
+            ),
+            {"RG-009"},
+        )
 
     def test_label_cardinality_and_ready_contract_are_reported(self):
         invalid = issue(
             labels=[
-                "workflow::ready",
                 "workflow::doing",
                 "backlog::shaping",
                 "backlog::ready-for-dev",
@@ -114,59 +194,62 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
             body=requirement_body(**{"Verification Plan": "TBD"}),
         )
         self.assertEqual(
-            self.rule_ids({"issues": [invalid], "pull_requests": []}),
+            self.rule_ids(snapshot(issues=[invalid])),
             {"RG-001", "RG-002", "RG-003", "RG-004"},
         )
 
     def test_doing_or_later_cannot_bypass_ready_contract(self):
         invalid = issue(
+            project_statuses=["Doing"],
             labels=[
-                "workflow::doing",
                 "backlog::idea",
                 "sizing::standard",
             ],
             body=requirement_body(**{"Acceptance Criteria": "N/A"}),
         )
         self.assertEqual(
-            self.rule_ids({"issues": [invalid], "pull_requests": []}),
+            self.rule_ids(snapshot(issues=[invalid])),
             {"RG-003", "RG-004"},
         )
 
     def test_ready_placeholder_matching_is_case_insensitive(self):
         invalid = issue(body=requirement_body(**{"Verification Plan": "tbd"}))
         self.assertEqual(
-            self.rule_ids({"issues": [invalid], "pull_requests": []}),
+            self.rule_ids(snapshot(issues=[invalid])),
             {"RG-004"},
         )
 
     def test_closed_issue_requires_done_and_structured_writeback(self):
-        closed = issue(state="CLOSED", labels=["sizing::heavy", "backlog::ready-for-dev"])
+        closed = issue(
+            state="CLOSED",
+            labels=["sizing::heavy", "backlog::ready-for-dev"],
+            project_statuses=["Verify"],
+        )
         self.assertEqual(
-            self.rule_ids({"issues": [closed], "pull_requests": []}),
+            self.rule_ids(snapshot(issues=[closed])),
             {"RG-005", "RG-008"},
         )
 
         completed = issue(
             state="CLOSED",
             labels=[
-                "workflow::done",
                 "backlog::ready-for-dev",
                 "sizing::heavy",
             ],
+            project_statuses=["Done"],
             comments=[writeback_comment()],
         )
         self.assertEqual(
             audit_snapshot(
-                {"issues": [completed], "pull_requests": []},
+                snapshot(issues=[completed]),
                 self.manifest,
             )["findings"],
             [],
         )
 
     def test_pr_without_non_closing_issue_reference_is_reported(self):
-        snapshot = {
-            "issues": [],
-            "pull_requests": [
+        value = snapshot(
+            pull_requests=[
                 {
                     "number": 43,
                     "title": "Synthetic pull request",
@@ -175,16 +258,15 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
                     "merged_commit": None,
                 }
             ],
-        }
-        self.assertEqual(self.rule_ids(snapshot), {"RG-006"})
+        )
+        self.assertEqual(self.rule_ids(value), {"RG-006"})
 
-        snapshot["pull_requests"][0]["body"] = "Related to #42\n\nFixes #42"
-        self.assertEqual(self.rule_ids(snapshot), {"RG-006"})
+        value["pull_requests"][0]["body"] = "Related to #42\n\nFixes #42"
+        self.assertEqual(self.rule_ids(value), {"RG-006"})
 
     def test_merged_governed_pr_still_requires_reference_but_legacy_pr_is_exempt(self):
-        snapshot = {
-            "issues": [],
-            "pull_requests": [
+        value = snapshot(
+            pull_requests=[
                 {
                     "number": 2,
                     "title": "Historical release PR",
@@ -202,8 +284,8 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
                     "comments": [],
                 },
             ],
-        }
-        findings = audit_snapshot(snapshot, self.manifest)["findings"]
+        )
+        findings = audit_snapshot(value, self.manifest)["findings"]
         self.assertEqual(
             [(item["rule_id"], item["subject"]) for item in findings],
             [("RG-006", "pull_request#4")],
@@ -213,7 +295,7 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
         sensitive = "123e4567-e89b-42d3-a456-426614174000"
         risky = issue(body=requirement_body(Summary=f"Leaked {sensitive}"))
         result = audit_snapshot(
-            {"issues": [risky], "pull_requests": []},
+            snapshot(issues=[risky]),
             self.manifest,
         )
         self.assertEqual({item["rule_id"] for item in result["findings"]}, {"RG-007"})
@@ -221,9 +303,8 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
 
     def test_privacy_risk_in_pr_comment_is_reported_without_echo(self):
         sensitive = "ghp_1234567890abcdefghijklmnop"
-        snapshot = {
-            "issues": [],
-            "pull_requests": [
+        value = snapshot(
+            pull_requests=[
                 {
                     "number": 4,
                     "title": "Synthetic pull request",
@@ -233,8 +314,8 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
                     "comments": [{"body": f"private {sensitive}"}],
                 }
             ],
-        }
-        result = audit_snapshot(snapshot, self.manifest)
+        )
+        result = audit_snapshot(value, self.manifest)
         self.assertEqual({item["rule_id"] for item in result["findings"]}, {"RG-007"})
         self.assertNotIn(sensitive, json.dumps(result))
 
@@ -246,7 +327,7 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
             with self.subTest(prefix=sensitive.split("_", 1)[0]):
                 risky = issue(body=requirement_body(Summary=f"Leaked {sensitive}"))
                 result = audit_snapshot(
-                    {"issues": [risky], "pull_requests": []},
+                    snapshot(issues=[risky]),
                     self.manifest,
                 )
                 self.assertEqual(
@@ -268,7 +349,7 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
             "comments": [],
         }
         result = audit_snapshot(
-            {"issues": [risky_issue], "pull_requests": [risky_pr]},
+            snapshot(issues=[risky_issue], pull_requests=[risky_pr]),
             self.manifest,
         )
         self.assertEqual(
@@ -278,8 +359,8 @@ class RequirementsGovernanceAuditTests(unittest.TestCase):
         self.assertNotIn(sensitive, json.dumps(result))
 
     def test_cli_is_read_only_json_and_uses_documented_exit_codes(self):
-        clean = {"issues": [issue()], "pull_requests": []}
-        invalid = {"issues": [issue(labels=["workflow::ready"])], "pull_requests": []}
+        clean = snapshot(issues=[issue()])
+        invalid = snapshot(issues=[issue(labels=["workflow::ready"])])
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -328,11 +409,11 @@ class RequirementsGovernanceAssetsTests(unittest.TestCase):
             for heading in required:
                 self.assertIn(f"label: {heading}", content)
             for label in (
-                "workflow::backlog",
                 "backlog::idea",
                 "sizing::standard",
             ):
                 self.assertIn(f'"{label}"', content)
+            self.assertNotIn('"workflow::', content)
             self.assertIn("真实 Session", content)
             self.assertIn("required: true", content)
 
@@ -371,10 +452,14 @@ class RequirementsGovernanceAssetsTests(unittest.TestCase):
             self.assertIn("requirements-governance.md", routing_document)
         for nfr_number in range(1, 11):
             self.assertIn(f"NFR-RM-{nfr_number:03d}", contract)
-        for rule_number in range(1, 9):
+        for rule_number in range(1, 10):
             self.assertIn(f"RG-{rule_number:03d}", contract)
         self.assertIn("明确不复用", contract)
         self.assertIn("不构成新的 Dream 产品发布", contract)
+        self.assertIn("Codex Dream Requirements", contract)
+        self.assertIn("Lifecycle Board", contract)
+        self.assertNotIn("Discovery Board", contract)
+        self.assertNotIn("Delivery Board", contract)
 
 
 if __name__ == "__main__":

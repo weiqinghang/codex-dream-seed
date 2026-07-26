@@ -109,6 +109,36 @@ def _writeback_valid(comment_body: str, manifest: Dict[str, Any]) -> bool:
     )
 
 
+def _project_contract_valid(
+    project: Any,
+    manifest: Dict[str, Any],
+) -> bool:
+    if not isinstance(project, dict):
+        return False
+    contract = manifest["project"]
+    status_field = project.get("status_field")
+    if not isinstance(status_field, dict):
+        return False
+    views = project.get("views")
+    if not isinstance(views, list):
+        return False
+    board_views = [
+        view
+        for view in views
+        if isinstance(view, dict) and str(view.get("layout", "")).upper() == "BOARD"
+    ]
+    return bool(
+        project.get("owner") == contract["owner"]
+        and project.get("number") == contract["number"]
+        and project.get("title") == contract["title"]
+        and contract["repository"] in project.get("repositories", [])
+        and status_field.get("name") == contract["status_field"]
+        and status_field.get("options") == contract["statuses"]
+        and len(board_views) == 1
+        and board_views[0].get("name") == contract["board_view"]
+    )
+
+
 def audit_snapshot(
     snapshot: Dict[str, Any],
     manifest: Dict[str, Any],
@@ -119,7 +149,17 @@ def audit_snapshot(
 
     findings: List[Dict[str, str]] = []
     labels = manifest["labels"]
+    project_contract = manifest["project"]
     ready = manifest["ready"]
+
+    if not _project_contract_valid(snapshot.get("project"), manifest):
+        findings.append(
+            _finding(
+                "RG-009",
+                "project",
+                "The linked requirements project must expose the canonical single board.",
+            )
+        )
 
     for issue in snapshot.get("issues", []):
         number = issue.get("number", "?")
@@ -129,17 +169,38 @@ def audit_snapshot(
         body = issue.get("body") or ""
         title = issue.get("title") or ""
         open_issue = state == "OPEN"
-
-        workflow = [name for name in issue_labels if name in labels["workflow"]]
-        sizing = [name for name in issue_labels if name in labels["sizing"]]
-        backlog = [name for name in issue_labels if name in labels["backlog"]]
-        contract_workflow = any(
-            name in workflow for name in ready["contract_workflows"]
+        governed_issue = (
+            isinstance(number, int)
+            and number >= manifest["activation"]["minimum_issue"]
         )
 
-        if open_issue and len(workflow) != 1:
+        project_statuses = [
+            value
+            for value in issue.get("project_statuses", [])
+            if isinstance(value, str)
+        ]
+        valid_project_status = bool(
+            len(project_statuses) == 1
+            and project_statuses[0] in project_contract["statuses"]
+        )
+        project_status = project_statuses[0] if valid_project_status else None
+        legacy_workflow = [
+            name
+            for name in issue_labels
+            if name in project_contract["legacy_workflow_labels"]
+        ]
+        sizing = [name for name in issue_labels if name in labels["sizing"]]
+        backlog = [name for name in issue_labels if name in labels["backlog"]]
+        contract_status = project_status in ready["contract_statuses"]
+
+        if governed_issue and (not valid_project_status or legacy_workflow):
             findings.append(
-                _finding("RG-001", subject, "Open issue must have exactly one workflow label.")
+                _finding(
+                    "RG-001",
+                    subject,
+                    "Governed issue must have exactly one canonical Project Status "
+                    "and no workflow label.",
+                )
             )
         if open_issue and len(sizing) != 1:
             findings.append(
@@ -148,7 +209,7 @@ def audit_snapshot(
         if open_issue and (
             len(backlog) != 1
             or (
-                contract_workflow
+                contract_status
                 and ready["backlog"] not in backlog
             )
         ):
@@ -160,7 +221,7 @@ def audit_snapshot(
                 )
             )
 
-        if contract_workflow:
+        if contract_status:
             values: Dict[str, str] = {}
             for level in ready["heading_levels"]:
                 values.update(_heading_values(body, level))
@@ -182,9 +243,9 @@ def audit_snapshot(
                     )
                 )
 
-        if state == "CLOSED" and "workflow::done" not in workflow:
+        if state == "CLOSED" and project_status != "Done":
             findings.append(
-                _finding("RG-005", subject, "Closed issue must have workflow::done.")
+                _finding("RG-005", subject, "Closed issue must have Project Status Done.")
             )
 
         privacy_inputs = [title, body]
@@ -202,7 +263,7 @@ def audit_snapshot(
                 )
             )
 
-        if "workflow::done" in workflow or state == "CLOSED":
+        if project_status == "Done" or state == "CLOSED":
             comments = issue.get("comments", [])
             if not any(
                 _writeback_valid(comment.get("body") or "", manifest)
@@ -287,8 +348,159 @@ def _gh_pages(repo: str, endpoint: str) -> List[Dict[str, Any]]:
         page += 1
 
 
-def collect_github_snapshot(repo: str) -> Dict[str, Any]:
-    """Collect a normalized snapshot with GET requests only."""
+def _gh_graphql(query: str, **variables: Any) -> Dict[str, Any]:
+    command = ["gh", "api", "graphql", "--method", "POST", "-f", f"query={query}"]
+    for name, value in variables.items():
+        if value is not None:
+            command.extend(["-F", f"{name}={value}"])
+    run = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        raise RuntimeError(run.stderr.strip() or "gh api graphql query failed")
+    result = json.loads(run.stdout)
+    if result.get("errors"):
+        raise RuntimeError("GitHub GraphQL query returned errors")
+    return result
+
+
+def _collect_project(manifest: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[int, List[str]]]:
+    contract = manifest["project"]
+    query = """
+query($owner: String!, $number: Int!, $after: String) {
+  user(login: $owner) {
+    projectV2(number: $number) {
+      number
+      title
+      url
+      repositories(first: 100) {
+        nodes { nameWithOwner }
+      }
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2SingleSelectField {
+            name
+            options { name }
+          }
+        }
+      }
+      views(first: 50) {
+        nodes {
+          name
+          layout
+        }
+      }
+      items(first: 100, after: $after) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          content {
+            ... on Issue {
+              number
+              repository { nameWithOwner }
+            }
+          }
+          fieldValues(first: 20) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field {
+                  ... on ProjectV2SingleSelectField { name }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+    cursor: Optional[str] = None
+    raw_project: Optional[Dict[str, Any]] = None
+    raw_items: List[Dict[str, Any]] = []
+    while True:
+        response = _gh_graphql(
+            query,
+            owner=contract["owner"],
+            number=contract["number"],
+            after=cursor,
+        )
+        owner = response.get("data", {}).get("user")
+        project = owner.get("projectV2") if isinstance(owner, dict) else None
+        if not isinstance(project, dict):
+            raise RuntimeError("Configured GitHub Project was not found")
+        raw_project = project
+        items = project["items"]
+        raw_items.extend(items.get("nodes") or [])
+        page_info = items["pageInfo"]
+        if not page_info["hasNextPage"]:
+            break
+        cursor = page_info["endCursor"]
+
+    assert raw_project is not None
+    status_fields = [
+        field
+        for field in raw_project["fields"].get("nodes") or []
+        if isinstance(field, dict) and field.get("name") == contract["status_field"]
+    ]
+    status_field = status_fields[0] if len(status_fields) == 1 else {}
+    normalized_project = {
+        "owner": contract["owner"],
+        "number": raw_project["number"],
+        "title": raw_project["title"],
+        "url": raw_project["url"],
+        "repositories": [
+            node["nameWithOwner"]
+            for node in raw_project["repositories"].get("nodes") or []
+            if isinstance(node, dict) and node.get("nameWithOwner")
+        ],
+        "status_field": {
+            "name": status_field.get("name"),
+            "options": [
+                option["name"]
+                for option in status_field.get("options") or []
+                if isinstance(option, dict) and option.get("name")
+            ],
+        },
+        "views": [
+            {
+                "name": view.get("name"),
+                "layout": str(view.get("layout", "")).removesuffix("_LAYOUT"),
+            }
+            for view in raw_project["views"].get("nodes") or []
+            if isinstance(view, dict)
+        ],
+    }
+    issue_statuses: Dict[int, List[str]] = {}
+    for item in raw_items:
+        content = item.get("content") if isinstance(item, dict) else None
+        if not isinstance(content, dict):
+            continue
+        if content.get("repository", {}).get("nameWithOwner") != contract["repository"]:
+            continue
+        issue_number = content.get("number")
+        if not isinstance(issue_number, int):
+            continue
+        statuses = []
+        for value in item.get("fieldValues", {}).get("nodes") or []:
+            if (
+                isinstance(value, dict)
+                and value.get("field", {}).get("name") == contract["status_field"]
+                and isinstance(value.get("name"), str)
+            ):
+                statuses.append(value["name"])
+        issue_statuses.setdefault(issue_number, []).extend(statuses)
+    return normalized_project, issue_statuses
+
+
+def collect_github_snapshot(repo: str, manifest: Dict[str, Any]) -> Dict[str, Any]:
+    """Collect a normalized snapshot with read-only REST and GraphQL requests."""
 
     raw_issues = _gh_pages(repo, "issues?state=all")
     issues = []
@@ -310,6 +522,10 @@ def collect_github_snapshot(repo: str) -> Dict[str, Any]:
             }
         )
 
+    project, issue_statuses = _collect_project(manifest)
+    for issue in issues:
+        issue["project_statuses"] = issue_statuses.get(issue["number"], [])
+
     pull_requests = []
     for item in _gh_pages(repo, "pulls?state=all"):
         number = item["number"]
@@ -328,7 +544,11 @@ def collect_github_snapshot(repo: str) -> Dict[str, Any]:
                 ],
             }
         )
-    return {"issues": issues, "pull_requests": pull_requests}
+    return {
+        "project": project,
+        "issues": issues,
+        "pull_requests": pull_requests,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -348,7 +568,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
             source = str(args.snapshot)
         else:
-            snapshot = collect_github_snapshot(args.repo)
+            snapshot = collect_github_snapshot(args.repo, manifest)
             source = f"github:{args.repo}"
         result = audit_snapshot(snapshot, manifest, source=source)
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError) as error:

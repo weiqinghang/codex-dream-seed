@@ -1,17 +1,34 @@
 {
-  "version": 1,
+  "version": 2,
   "activation": {
-    "minimum_pull_request": 4
+    "minimum_pull_request": 4,
+    "minimum_issue": 3
   },
-  "labels": {
-    "workflow": [
+  "project": {
+    "owner": "weiqinghang",
+    "number": 4,
+    "title": "Codex Dream Requirements",
+    "repository": "weiqinghang/codex-dream-seed",
+    "status_field": "Status",
+    "statuses": [
+      "Backlog",
+      "Ready",
+      "Doing",
+      "Verify",
+      "Writeback",
+      "Done"
+    ],
+    "board_view": "Lifecycle Board",
+    "legacy_workflow_labels": [
       "workflow::backlog",
       "workflow::ready",
       "workflow::doing",
       "workflow::verify",
       "workflow::writeback",
       "workflow::done"
-    ],
+    ]
+  },
+  "labels": {
     "backlog": [
       "backlog::idea",
       "backlog::shaping",
@@ -25,13 +42,13 @@
     ]
   },
   "ready": {
-    "workflow": "workflow::ready",
-    "contract_workflows": [
-      "workflow::ready",
-      "workflow::doing",
-      "workflow::verify",
-      "workflow::writeback",
-      "workflow::done"
+    "status": "Ready",
+    "contract_statuses": [
+      "Ready",
+      "Doing",
+      "Verify",
+      "Writeback",
+      "Done"
     ],
     "backlog": "backlog::ready-for-dev",
     "heading_levels": [
