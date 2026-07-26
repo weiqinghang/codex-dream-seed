@@ -3,14 +3,13 @@ description: Report a reproducible, sanitized Codex Dream defect
 title: "缺陷："
 labels:
   - "type::bug"
-  - "workflow::backlog"
   - "backlog::idea"
   - "sizing::standard"
 body:
   - type: markdown
     attributes:
       value: |
-        请先移除真实 Session、梦境、知识、UUID、绝对路径、密钥与私有 Workspace 原文。默认 Sizing 仅用于建卡，维护者会在分诊时确认。
+        GitHub Issue 保存缺陷契约，Codex Dream Requirements Project 的 Status 保存唯一 workflow 状态并自动进入 Backlog。请先移除真实 Session、梦境、知识、UUID、绝对路径、密钥与私有 Workspace 原文。默认 Sizing 仅用于建卡，维护者会在分诊时确认。
   - type: textarea
     id: summary
     attributes:

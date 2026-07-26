@@ -2,15 +2,14 @@ name: Product requirement
 description: Propose a durable Codex Dream product or repository requirement
 title: "需求："
 labels:
-  - "workflow::backlog"
   - "backlog::idea"
   - "sizing::standard"
 body:
   - type: markdown
     attributes:
       value: |
-        GitHub Issue 是本仓库需求状态的唯一事实源。请使用产品化、脱敏描述；不要粘贴真实 Session、梦境、知识、UUID、绝对路径、密钥或私有 Workspace 原文。
-        新建卡默认按 Standard 进入 Backlog；维护者应在首次分诊时确认 Micro / Standard / Heavy。
+        GitHub Issue 保存需求契约，Codex Dream Requirements Project 的 Status 保存唯一 workflow 状态。请使用产品化、脱敏描述；不要粘贴真实 Session、梦境、知识、UUID、绝对路径、密钥或私有 Workspace 原文。
+        新建卡默认按 Standard 创建，并由 Project 自动加入 Backlog；维护者应在首次分诊时确认 Micro / Standard / Heavy。
   - type: textarea
     id: summary
     attributes:
