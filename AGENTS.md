@@ -60,13 +60,15 @@ Skill before committing changes.
 
 ## Repository requirements governance
 
-- GitHub Issue is the only status source for product requirements, defects, and
-  repository-operations work that must survive across tasks.
+- GitHub Issue stores the durable requirement contract. The linked
+  [`Codex Dream Requirements`](https://github.com/users/weiqinghang/projects/4)
+  Project `Status` is the only workflow state source for product requirements,
+  defects, and repository-operations work.
 - Follow `docs/project/requirements-governance.md` for lifecycle, sizing, privacy,
   acceptance, writeback, and the explicitly excluded Playbook mechanisms.
 - Never put real sessions, dreams, knowledge, UUIDs, absolute user paths, secrets, or
   private Workspace content in an Issue, PR, comment, fixture, or governance artifact.
-- Link PRs with `Related to #N`. Complete structured writeback and default-branch
-  readback before applying `workflow::done` and closing the Issue.
+- Link PRs with `Related to #N`. Complete structured writeback, default-branch
+  readback, and Project readback before moving Status to `Done` and closing the Issue.
 - These governance assets are repository operations. Do not route them into the Dream
   CLI, bundled Skill, Console, schemas, Workspace, package version, or stable tags.

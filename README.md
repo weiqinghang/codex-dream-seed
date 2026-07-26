@@ -569,7 +569,10 @@ tests/                       只使用合成 rollout 的测试
 提交产品需求、缺陷或需要跨任务追踪的仓库事项时，请先阅读
 [贡献说明](CONTRIBUTING.md) 与
 [Requirements governance](docs/project/requirements-governance.md)。该流程只管理仓库
-自身，不读取或管理任何用户梦境、知识或 Workspace 内容。
+自身，并通过唯一的
+[Codex Dream Requirements](https://github.com/users/weiqinghang/projects/4)
+Lifecycle Board 展示从 Backlog 到 Done 的状态；它不读取或管理任何用户梦境、知识或
+Workspace 内容。
 
 ```bash
 python3 -m unittest tests.console_runtime_tests -v
