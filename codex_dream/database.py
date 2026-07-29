@@ -136,6 +136,26 @@ def connect(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def connect_readonly(path: Path) -> sqlite3.Connection:
+    """Open an existing database without creating or modifying persistent state."""
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"missing database: {path}")
+    try:
+        connection = sqlite3.connect(
+            f"{path.resolve().as_uri()}?mode=ro",
+            timeout=5,
+            uri=True,
+        )
+    except sqlite3.OperationalError as error:
+        raise ValueError(f"cannot open database read-only: {path}: {error}") from error
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA query_only = ON")
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 5000")
+    return connection
+
+
 @contextmanager
 def open_database(path: Path):
     """Commit or roll back a unit of work, then always release the file handle."""
@@ -143,6 +163,31 @@ def open_database(path: Path):
     try:
         with connection:
             yield connection
+    finally:
+        connection.close()
+
+
+@contextmanager
+def open_readonly_database(path: Path, *, require_current_schema: bool = True):
+    """Open an existing compatible database for queries only."""
+    connection = connect_readonly(path)
+    try:
+        if require_current_schema:
+            try:
+                row = connection.execute(
+                    "SELECT value FROM meta WHERE key='database_schema'"
+                ).fetchone()
+                actual = int(row["value"]) if row is not None else None
+            except (sqlite3.DatabaseError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "database schema metadata is missing or invalid"
+                ) from error
+            if actual != DATABASE_SCHEMA_VERSION:
+                raise ValueError(
+                    "database schema version is incompatible: "
+                    f"expected {DATABASE_SCHEMA_VERSION}, found {actual}"
+                )
+        yield connection
     finally:
         connection.close()
 
@@ -157,8 +202,7 @@ def initialize(path: Path) -> None:
 
 
 def get_console_setting(path: Path, key: str, default: Any = None) -> Any:
-    initialize(path)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         row = connection.execute(
             "SELECT value_json FROM console_settings WHERE key=?", (key,)
         ).fetchone()
@@ -189,21 +233,19 @@ def append_run_event(
 
 
 def list_run_events(path: Path, run_id: str | None = None) -> list[dict[str, Any]]:
-    initialize(path)
     sql = "SELECT * FROM dream_run_events"
     params: tuple[Any, ...] = ()
     if run_id:
         sql += " WHERE run_id=?"
         params = (run_id,)
     sql += " ORDER BY event_id"
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         rows = connection.execute(sql, params).fetchall()
     return [{**dict(row), "details": json.loads(row["details_json"])} for row in rows]
 
 
 def load_sessions(path: Path) -> dict[str, dict[str, Any]]:
-    initialize(path)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         rows = connection.execute(
             "SELECT session_id, payload_json FROM sessions ORDER BY session_id"
         ).fetchall()
@@ -321,8 +363,7 @@ def write_review_cards(path: Path, cards: list[dict[str, Any]]) -> None:
 
 
 def load_review_cards(path: Path) -> list[dict[str, Any]]:
-    initialize(path)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         rows = connection.execute(
             "SELECT payload_json FROM review_cards ORDER BY last_updated_at DESC"
         ).fetchall()
@@ -364,8 +405,7 @@ def import_historical_runs(path: Path, reports_root: Path) -> int:
 
 
 def list_runs(path: Path, limit: int = 100) -> list[dict[str, Any]]:
-    initialize(path)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         rows = connection.execute(
             """
             SELECT r.run_id, r.status, r.started_at, r.completed_at, r.title,
@@ -393,12 +433,11 @@ def list_run_ids_by_task_refs(
     path: Path, task_refs: Iterable[str]
 ) -> dict[str, list[str]]:
     """Return Dream lineage for private task references without exposing session IDs."""
-    initialize(path)
     selected = tuple(sorted({str(value) for value in task_refs if str(value)}))
-    if not selected:
-        return {}
-    placeholders = ",".join("?" for _ in selected)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
+        if not selected:
+            return {}
+        placeholders = ",".join("?" for _ in selected)
         rows = connection.execute(
             f"""
             SELECT task_ref, run_id
@@ -766,9 +805,8 @@ def transition_user_action(
 
 
 def get_user_action(path: Path, action_id: str) -> dict[str, Any]:
-    initialize(path)
     numeric_id = int(action_id.split("-", 1)[1])
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         row = connection.execute(
             "SELECT * FROM user_actions WHERE action_id=?", (numeric_id,)
         ).fetchone()
@@ -888,9 +926,8 @@ def retry_user_action(
 def list_user_actions(
     path: Path, limit: int = 50, statuses: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
-    initialize(path)
     selected = tuple(sorted(set(statuses or ())))
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         if selected:
             placeholders = ",".join("?" for _ in selected)
             rows = connection.execute(
@@ -913,8 +950,7 @@ def list_user_actions(
 
 
 def runtime_counts(path: Path) -> dict[str, int]:
-    initialize(path)
-    with open_database(path) as connection:
+    with open_readonly_database(path) as connection:
         return {
             "ledger_sessions": int(connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]),
             "reviewed_sessions": int(
@@ -935,7 +971,9 @@ def verify_database(path: Path) -> dict[str, Any]:
         return {"status": "failed", "errors": [f"missing database: {path}"]}
     errors: list[str] = []
     try:
-        with open_database(path) as connection:
+        with open_readonly_database(
+            path, require_current_schema=False
+        ) as connection:
             result = connection.execute("PRAGMA integrity_check").fetchone()[0]
             if result != "ok":
                 errors.append(f"integrity_check: {result}")

@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -54,6 +55,59 @@ class CliTests(unittest.TestCase):
                 *arguments,
             ])
         return exit_code, json.loads(output.getvalue())
+
+    @staticmethod
+    def logical_database_dump(path):
+        with sqlite3.connect(path) as connection:
+            return "\n".join(connection.iterdump())
+
+    def test_read_only_cli_commands_do_not_create_a_missing_database(self):
+        database = database_path(self.root)
+        database.unlink()
+
+        for command in ("doctor", "verify"):
+            with self.subTest(command=command):
+                exit_code, _ = self.run_canonical_cli(command)
+                self.assertEqual(exit_code, 1)
+                self.assertFalse(database.exists())
+
+        for arguments in (("handoff-list",), ("console-context",)):
+            with self.subTest(command=arguments[0]):
+                with self.assertRaisesRegex(SystemExit, "missing database"):
+                    self.run_canonical_cli(*arguments)
+                self.assertFalse(database.exists())
+
+    def test_read_only_cli_commands_fail_closed_on_incompatible_database(self):
+        database = database_path(self.root)
+        readers = {
+            "doctor": lambda: self.run_canonical_cli("doctor"),
+            "verify": lambda: self.run_canonical_cli("verify"),
+            "handoff-list": lambda: self.run_canonical_cli("handoff-list"),
+            "console-context": lambda: self.run_canonical_cli("console-context"),
+        }
+        for name, reader in readers.items():
+            with self.subTest(command=name):
+                with sqlite3.connect(database) as connection:
+                    connection.execute(
+                        "UPDATE meta SET value='1' WHERE key='database_schema'"
+                    )
+                before = self.logical_database_dump(database)
+                try:
+                    if name == "doctor":
+                        exit_code, _ = reader()
+                        self.assertEqual(exit_code, 1)
+                    elif name == "verify":
+                        with self.assertRaisesRegex(ValueError, "database schema"):
+                            reader()
+                    else:
+                        with self.assertRaisesRegex(SystemExit, "database schema"):
+                            reader()
+                finally:
+                    self.assertEqual(self.logical_database_dump(database), before)
+                    with sqlite3.connect(database) as connection:
+                        connection.execute(
+                            "UPDATE meta SET value='2' WHERE key='database_schema'"
+                        )
 
     def test_sync_dry_run_does_not_create_ledger(self):
         exit_code, result = self.run_cli("sync", "--dry-run")

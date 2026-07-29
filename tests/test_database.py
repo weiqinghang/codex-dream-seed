@@ -4,23 +4,28 @@ import unittest
 from pathlib import Path
 
 from codex_dream.database import (
+    DATABASE_SCHEMA_VERSION,
     allocate_task_refs,
     begin_user_action,
     claim_user_action,
     complete_run,
     create_run,
     fail_run,
+    get_console_setting,
+    get_user_action,
     initialize,
     load_review_cards,
     load_sessions,
     open_database,
+    open_readonly_database,
     runtime_counts,
     link_run_tasks,
-    get_user_action,
+    list_run_ids_by_task_refs,
     list_user_actions,
     list_runs,
     list_run_events,
     resume_run,
+    set_console_setting,
     transition_user_action,
     verify_database,
     write_review_cards,
@@ -36,6 +41,125 @@ class DatabaseTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    @staticmethod
+    def logical_dump(path: Path) -> str:
+        with sqlite3.connect(path) as connection:
+            return "\n".join(connection.iterdump())
+
+    @staticmethod
+    def public_readers(path: Path):
+        return {
+            "get_console_setting": lambda: get_console_setting(
+                path, "board_policy", {}
+            ),
+            "list_run_events": lambda: list_run_events(path),
+            "load_sessions": lambda: load_sessions(path),
+            "load_review_cards": lambda: load_review_cards(path),
+            "list_runs": lambda: list_runs(path),
+            "list_run_ids_by_task_refs": lambda: list_run_ids_by_task_refs(
+                path, ["TASK-0001"]
+            ),
+            "list_run_ids_by_empty_task_refs": lambda: list_run_ids_by_task_refs(
+                path, []
+            ),
+            "get_user_action": lambda: get_user_action(path, "ACT-000001"),
+            "list_user_actions": lambda: list_user_actions(path),
+            "runtime_counts": lambda: runtime_counts(path),
+        }
+
+    def test_public_read_helpers_do_not_create_a_missing_database(self):
+        for index, name in enumerate(self.public_readers(Path("unused"))):
+            missing = (
+                Path(self.temp.name)
+                / f"missing-{index}"
+                / "state"
+                / "dream.sqlite3"
+            )
+            reader = self.public_readers(missing)[name]
+            with self.subTest(reader=name):
+                with self.assertRaisesRegex(ValueError, "missing database"):
+                    reader()
+                self.assertFalse(missing.exists())
+                self.assertFalse(missing.parent.exists())
+
+    def test_readonly_connection_enforces_query_only(self):
+        with open_readonly_database(self.path) as connection:
+            self.assertEqual(connection.execute("PRAGMA query_only").fetchone()[0], 1)
+            with self.assertRaises(sqlite3.OperationalError):
+                connection.execute(
+                    "INSERT INTO meta(key, value) VALUES('forbidden-read', 'no')"
+                )
+
+        with sqlite3.connect(self.path) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT value FROM meta WHERE key='forbidden-read'"
+                ).fetchone()
+            )
+
+    def test_readonly_database_requires_valid_schema_metadata_without_mutation(self):
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("DELETE FROM meta WHERE key='database_schema'")
+        before = self.logical_dump(self.path)
+
+        with self.assertRaisesRegex(ValueError, "database schema"):
+            with open_readonly_database(self.path):
+                pass
+
+        self.assertEqual(self.logical_dump(self.path), before)
+
+    def test_public_read_helpers_fail_closed_without_mutating_incompatible_database(self):
+        for name in self.public_readers(self.path):
+            with self.subTest(reader=name):
+                with sqlite3.connect(self.path) as connection:
+                    connection.execute(
+                        "UPDATE meta SET value='1' WHERE key='database_schema'"
+                    )
+                before = self.logical_dump(self.path)
+                try:
+                    with self.assertRaisesRegex(ValueError, "database schema"):
+                        self.public_readers(self.path)[name]()
+                finally:
+                    self.assertEqual(self.logical_dump(self.path), before)
+                    with sqlite3.connect(self.path) as connection:
+                        connection.execute(
+                            "UPDATE meta SET value=? WHERE key='database_schema'",
+                            (str(DATABASE_SCHEMA_VERSION),),
+                        )
+
+    def test_public_read_helpers_leave_compatible_database_unchanged(self):
+        before = self.logical_dump(self.path)
+        for name, reader in self.public_readers(self.path).items():
+            with self.subTest(reader=name):
+                try:
+                    reader()
+                except ValueError as error:
+                    self.assertIn("unknown user action", str(error))
+                self.assertEqual(self.logical_dump(self.path), before)
+
+    def test_verify_database_is_read_only_for_incompatible_schema(self):
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                "UPDATE meta SET value='1' WHERE key='database_schema'"
+            )
+        before = self.logical_dump(self.path)
+
+        result = verify_database(self.path)
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("unexpected database schema version", result["errors"])
+        self.assertEqual(self.logical_dump(self.path), before)
+
+    def test_explicit_write_helper_still_initializes_a_missing_database(self):
+        missing = Path(self.temp.name) / "new/state/dream.sqlite3"
+
+        set_console_setting(missing, "board_policy", {"trial_active": 3})
+
+        self.assertTrue(missing.is_file())
+        self.assertEqual(
+            get_console_setting(missing, "board_policy"), {"trial_active": 3}
+        )
 
     def test_round_trips_runtime_state_and_allocates_stable_task_refs(self):
         record = {
@@ -280,6 +404,38 @@ class DatabaseTests(unittest.TestCase):
             ).fetchone()
             rolled_back = verification_connection.execute(
                 "SELECT value FROM meta WHERE key='rolled-back-test'"
+            ).fetchone()
+        self.assertEqual(committed[0], "yes")
+        self.assertIsNone(rolled_back)
+
+    def test_explicit_initialize_and_managed_transactions_remain_write_capable(self):
+        path = Path(self.temp.name) / "explicit-write/state/dream.sqlite3"
+
+        initialize(path)
+        self.assertTrue(path.is_file())
+        with open_database(path) as connection:
+            self.assertEqual(connection.execute("PRAGMA query_only").fetchone()[0], 0)
+            schema = connection.execute(
+                "SELECT value FROM meta WHERE key='database_schema'"
+            ).fetchone()
+            self.assertEqual(int(schema[0]), DATABASE_SCHEMA_VERSION)
+            connection.execute(
+                "INSERT INTO meta(key, value) VALUES('committed-write', 'yes')"
+            )
+
+        with self.assertRaisesRegex(RuntimeError, "rollback explicit write"):
+            with open_database(path) as connection:
+                connection.execute(
+                    "INSERT INTO meta(key, value) VALUES('rolled-back-write', 'no')"
+                )
+                raise RuntimeError("rollback explicit write")
+
+        with sqlite3.connect(path) as connection:
+            committed = connection.execute(
+                "SELECT value FROM meta WHERE key='committed-write'"
+            ).fetchone()
+            rolled_back = connection.execute(
+                "SELECT value FROM meta WHERE key='rolled-back-write'"
             ).fetchone()
         self.assertEqual(committed[0], "yes")
         self.assertIsNone(rolled_back)
