@@ -3,6 +3,10 @@
 状态：0.4.0 已实现并完成本地端到端验收。Board 是主推进视图，单项时间线是详情视图；
 owner/blocker overlay 与 intake-vs-closeout 趋势保留为后续增强，不阻塞本版闭环。
 
+后续已批准扩展：
+[`Dream Console 改进承诺闭环（V1）`](dream-console-commitment-closure-v1.md)。该契约细化
+承诺级 WIP、override 复核、到期闭环和结果度量；本页继续保存 0.4.0 Board 基线。
+
 ## 1. Outcome
 
 Dream Console 要帮助用户限制进行中工作，而不只是持续发现和采纳改进。用户打开 Console
