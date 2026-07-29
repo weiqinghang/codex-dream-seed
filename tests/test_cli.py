@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,7 +58,7 @@ class CliTests(unittest.TestCase):
 
     @staticmethod
     def logical_database_dump(path):
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             return "\n".join(connection.iterdump())
 
     def test_read_only_cli_commands_do_not_create_a_missing_database(self):
@@ -87,10 +87,11 @@ class CliTests(unittest.TestCase):
         }
         for name, reader in readers.items():
             with self.subTest(command=name):
-                with sqlite3.connect(database) as connection:
+                with closing(sqlite3.connect(database)) as connection:
                     connection.execute(
                         "UPDATE meta SET value='1' WHERE key='database_schema'"
                     )
+                    connection.commit()
                 before = self.logical_database_dump(database)
                 try:
                     if name == "doctor":
@@ -104,10 +105,11 @@ class CliTests(unittest.TestCase):
                             reader()
                 finally:
                     self.assertEqual(self.logical_database_dump(database), before)
-                    with sqlite3.connect(database) as connection:
+                    with closing(sqlite3.connect(database)) as connection:
                         connection.execute(
                             "UPDATE meta SET value='2' WHERE key='database_schema'"
                         )
+                        connection.commit()
 
     def test_sync_dry_run_does_not_create_ledger(self):
         exit_code, result = self.run_cli("sync", "--dry-run")

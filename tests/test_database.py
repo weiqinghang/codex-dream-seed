@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from codex_dream.database import (
@@ -44,7 +45,7 @@ class DatabaseTests(unittest.TestCase):
 
     @staticmethod
     def logical_dump(path: Path) -> str:
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             return "\n".join(connection.iterdump())
 
     @staticmethod
@@ -91,7 +92,7 @@ class DatabaseTests(unittest.TestCase):
                     "INSERT INTO meta(key, value) VALUES('forbidden-read', 'no')"
                 )
 
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection:
             self.assertIsNone(
                 connection.execute(
                     "SELECT value FROM meta WHERE key='forbidden-read'"
@@ -99,8 +100,9 @@ class DatabaseTests(unittest.TestCase):
             )
 
     def test_readonly_database_requires_valid_schema_metadata_without_mutation(self):
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection:
             connection.execute("DELETE FROM meta WHERE key='database_schema'")
+            connection.commit()
         before = self.logical_dump(self.path)
 
         with self.assertRaisesRegex(ValueError, "database schema"):
@@ -112,21 +114,23 @@ class DatabaseTests(unittest.TestCase):
     def test_public_read_helpers_fail_closed_without_mutating_incompatible_database(self):
         for name in self.public_readers(self.path):
             with self.subTest(reader=name):
-                with sqlite3.connect(self.path) as connection:
+                with closing(sqlite3.connect(self.path)) as connection:
                     connection.execute(
                         "UPDATE meta SET value='1' WHERE key='database_schema'"
                     )
+                    connection.commit()
                 before = self.logical_dump(self.path)
                 try:
                     with self.assertRaisesRegex(ValueError, "database schema"):
                         self.public_readers(self.path)[name]()
                 finally:
                     self.assertEqual(self.logical_dump(self.path), before)
-                    with sqlite3.connect(self.path) as connection:
+                    with closing(sqlite3.connect(self.path)) as connection:
                         connection.execute(
                             "UPDATE meta SET value=? WHERE key='database_schema'",
                             (str(DATABASE_SCHEMA_VERSION),),
                         )
+                        connection.commit()
 
     def test_public_read_helpers_leave_compatible_database_unchanged(self):
         before = self.logical_dump(self.path)
@@ -139,10 +143,11 @@ class DatabaseTests(unittest.TestCase):
                 self.assertEqual(self.logical_dump(self.path), before)
 
     def test_verify_database_is_read_only_for_incompatible_schema(self):
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection:
             connection.execute(
                 "UPDATE meta SET value='1' WHERE key='database_schema'"
             )
+            connection.commit()
         before = self.logical_dump(self.path)
 
         result = verify_database(self.path)
@@ -430,7 +435,7 @@ class DatabaseTests(unittest.TestCase):
                 )
                 raise RuntimeError("rollback explicit write")
 
-        with sqlite3.connect(path) as connection:
+        with closing(sqlite3.connect(path)) as connection:
             committed = connection.execute(
                 "SELECT value FROM meta WHERE key='committed-write'"
             ).fetchone()

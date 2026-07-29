@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -76,7 +77,7 @@ class ConsoleServiceTests(unittest.TestCase):
         }
 
     def logical_database_dump(self):
-        with sqlite3.connect(self.service.database) as connection:
+        with closing(sqlite3.connect(self.service.database)) as connection:
             return "\n".join(connection.iterdump())
 
     def test_console_read_models_leave_compatible_database_unchanged(self):
@@ -117,20 +118,22 @@ class ConsoleServiceTests(unittest.TestCase):
         }
         for name, reader in readers.items():
             with self.subTest(reader=name):
-                with sqlite3.connect(self.service.database) as connection:
+                with closing(sqlite3.connect(self.service.database)) as connection:
                     connection.execute(
                         "UPDATE meta SET value='1' WHERE key='database_schema'"
                     )
+                    connection.commit()
                 before = self.logical_database_dump()
                 try:
                     with self.assertRaisesRegex(ValueError, "database schema"):
                         reader()
                 finally:
                     self.assertEqual(self.logical_database_dump(), before)
-                    with sqlite3.connect(self.service.database) as connection:
+                    with closing(sqlite3.connect(self.service.database)) as connection:
                         connection.execute(
                             "UPDATE meta SET value='2' WHERE key='database_schema'"
                         )
+                        connection.commit()
 
     def test_run_view_exposes_duration_and_exact_recorded_tokens(self):
         run = self.service._run_view(
