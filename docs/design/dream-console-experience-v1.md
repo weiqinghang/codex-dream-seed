@@ -2,6 +2,10 @@
 
 状态：方案 B“聚焦工作台”已在 0.4.0 完成实现、真实浏览器验收和稳定发布门。
 
+后续已批准扩展：
+[`Dream Console 改进承诺闭环（V1）`](dream-console-commitment-closure-v1.md)。该契约规划
+有限承诺 WIP、三维首页、到期/逾期和 Human Closeout Gate，不改写本页的 0.4.0 历史基线。
+
 ## 0. 当前开发状态
 
 0.4.0 已把注意力窗口、改进生命周期、`user_anchor` 结果和 Console → Codex 确定性交接
