@@ -1,8 +1,10 @@
 import json
 import http.client
+import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import closing
 from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -73,6 +75,65 @@ class ConsoleServiceTests(unittest.TestCase):
             "reminder_date": (date.today() + timedelta(days=30)).isoformat(),
             "criteria_confirmed": True,
         }
+
+    def logical_database_dump(self):
+        with closing(sqlite3.connect(self.service.database)) as connection:
+            return "\n".join(connection.iterdump())
+
+    def test_console_read_models_leave_compatible_database_unchanged(self):
+        before = self.logical_database_dump()
+        readers = {
+            "overview": self.service.overview,
+            "runs": self.service.runs,
+            "report": lambda: self.service.report("DREAM-000001"),
+            "console_context": self.service.console_context,
+            "board_policy": self.service.board_policy,
+            "board": self.service.board,
+            "tasks": self.service.tasks,
+            "knowledge": self.service.knowledge,
+            "actions": self.service.actions,
+            "handoffs": self.service.handoffs,
+            "improvements": self.service.improvements,
+        }
+        for name, reader in readers.items():
+            with self.subTest(reader=name):
+                try:
+                    reader()
+                except ConsoleError:
+                    pass
+                self.assertEqual(self.logical_database_dump(), before)
+
+    def test_database_backed_console_reads_fail_closed_without_mutating_incompatible_database(self):
+        readers = {
+            "overview": self.service.overview,
+            "runs": self.service.runs,
+            "report": lambda: self.service.report("DREAM-000001"),
+            "console_context": self.service.console_context,
+            "board_policy": self.service.board_policy,
+            "board": self.service.board,
+            "tasks": self.service.tasks,
+            "actions": self.service.actions,
+            "handoffs": self.service.handoffs,
+            "improvements": self.service.improvements,
+        }
+        for name, reader in readers.items():
+            with self.subTest(reader=name):
+                with closing(sqlite3.connect(self.service.database)) as connection:
+                    connection.execute(
+                        "UPDATE meta SET value='1' WHERE key='database_schema'"
+                    )
+                    connection.commit()
+                before = self.logical_database_dump()
+                try:
+                    with self.assertRaisesRegex(ValueError, "database schema"):
+                        reader()
+                finally:
+                    self.assertEqual(self.logical_database_dump(), before)
+                    with closing(sqlite3.connect(self.service.database)) as connection:
+                        connection.execute(
+                            "UPDATE meta SET value='2' WHERE key='database_schema'"
+                        )
+                        connection.commit()
 
     def test_run_view_exposes_duration_and_exact_recorded_tokens(self):
         run = self.service._run_view(
