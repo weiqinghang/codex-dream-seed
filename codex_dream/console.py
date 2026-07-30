@@ -35,6 +35,7 @@ from .database import (
     set_console_setting,
     transition_user_action,
 )
+from .commitments import project_commitments, select_commitment
 from .knowledge import record_event
 from .locking import WorkspaceLockError, workspace_write_lock
 from .schema import require_current_workspace
@@ -112,6 +113,12 @@ class ConsoleService:
             "recent_runs": self.runs()[:4],
         }
 
+    def commitments(self) -> dict[str, Any]:
+        """Return the canonical, privacy-reduced commitment projection."""
+        return project_commitments(
+            self._items(), list_user_actions(self.database, limit=None)
+        )
+
     def runs(self) -> list[dict[str, Any]]:
         runs = list_runs(self.database)
         runs.sort(key=lambda value: str(value.get("started_at") or ""), reverse=True)
@@ -153,6 +160,7 @@ class ConsoleService:
         card_id: str | None = None,
     ) -> dict[str, Any]:
         board = self.board()
+        commitment_projection = board["commitment_projection"]
         incomplete = [
             {"action_id": value["action_id"], "action_type": value["action_type"], "created_at": value["created_at"]}
             for value in list_user_actions(self.database, limit=100, statuses={"pending"})
@@ -165,8 +173,11 @@ class ConsoleService:
             ),
             None,
         )
-        if card_id and selected_card is None:
-            raise ConsoleError(f"unknown board card: {card_id}")
+        selected_commitment = select_commitment(
+            commitment_projection, card_id
+        )
+        if card_id and selected_card is None and selected_commitment is None:
+            raise ConsoleError(f"unknown board card or commitment: {card_id}")
         handoff = None
         snapshot_diff: list[str] = []
         if handoff_id:
@@ -176,6 +187,9 @@ class ConsoleService:
                 raise ConsoleError(str(error)) from error
             if handoff.get("action_type") != "enter_trial":
                 raise ConsoleError(f"not a Console handoff: {handoff_id}")
+            selected_commitment = selected_commitment or select_commitment(
+                commitment_projection, handoff_id
+            )
             related = next(
                 (card for card in cards if handoff_id in card.get("related_ids", [])),
                 None,
@@ -192,11 +206,19 @@ class ConsoleService:
             if snapshot.get("attempt") and int(snapshot["attempt"]) != int(handoff.get("payload", {}).get("attempt") or 1):
                 snapshot_diff.append("handoff_attempt_changed")
         columns = [
-            {"id": value["id"], "label": value["label"], "count": value["count"], "limit": value["wip_limit"]}
+            {
+                "id": value["id"],
+                "label": value["label"],
+                "count": value["count"],
+                "commitment_wip_count": value["commitment_wip_count"],
+                "limit": value["wip_limit"],
+            }
             for value in board["columns"]
         ]
         return {
             "generated_at": board["generated_at"],
+            "commitment_projection": commitment_projection,
+            "commitment": selected_commitment,
             "workspace": {
                 "fingerprint": self.workspace_fingerprint,
                 "source": self.workspace_source,
@@ -489,6 +511,7 @@ class ConsoleService:
         candidate: dict[str, Any],
         actions: list[dict[str, Any]],
         run_ids_by_task_ref: dict[str, list[str]],
+        now: datetime,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         candidate_id = str(candidate.get("candidate_id"))
         adoption = next(
@@ -578,7 +601,10 @@ class ConsoleService:
                 and not waiting_for_new_evidence
             )
             max_days = self._integer(contract.get("max_validation_days"), 0)
-            aging = bool(max_days and self._days_since(stage_started_at) >= max_days)
+            aging = bool(
+                max_days
+                and self._days_since(stage_started_at, now=now) >= max_days
+            )
             if status == "proven":
                 stage = "done"
                 next_action = "查看完整旅程"
@@ -661,7 +687,7 @@ class ConsoleService:
             "title": candidate.get("title") or item.get("title") or "未命名改进",
             "scope": scope,
             "projects": sorted({str(value) for value in candidate.get("projects", [])}),
-            "age_days": self._age_days(stage_started_at),
+            "age_days": self._age_days(stage_started_at, now=now),
             "health": health,
             "progress": progress,
             "evidence_summary": evidence_summary,
@@ -690,8 +716,12 @@ class ConsoleService:
 
     def board(self) -> dict[str, Any]:
         """Build a privacy-reduced, deterministic flow-board projection."""
+        now = datetime.now(timezone.utc)
         items = self._items()
-        actions = list_user_actions(self.database, limit=500)
+        actions = list_user_actions(self.database, limit=None)
+        commitment_projection = project_commitments(
+            items, actions, now=now
+        )
         candidates = [
             candidate for item in items for candidate in item.get("candidates", [])
         ]
@@ -707,7 +737,7 @@ class ConsoleService:
         for item in items:
             for candidate in item.get("candidates", []):
                 card, signals = self._improvement_board_card(
-                    item, candidate, actions, run_ids_by_task_ref
+                    item, candidate, actions, run_ids_by_task_ref, now
                 )
                 if card["stage"] == "deferred":
                     continue
@@ -742,11 +772,15 @@ class ConsoleService:
             stage = str(definition["id"])
             stage_cards = [card for card in cards if card["stage"] == stage]
             limit = policy[stage]
+            commitment_wip_count = commitment_projection[
+                "active_by_stage"
+            ].get(stage, 0)
             columns.append(
                 {
                     **definition,
                     "wip_limit": limit,
                     "count": counts[stage],
+                    "commitment_wip_count": commitment_wip_count,
                     "oldest_age_days": max(
                         (
                             self._integer(card.get("age_days"))
@@ -757,15 +791,16 @@ class ConsoleService:
                     ),
                 }
             )
-            if limit is not None and counts[stage] > limit:
+            if limit is not None and commitment_wip_count > limit:
                 advisories.append(
                     {
                         "type": "wip_exceeded",
                         "severity": "warning",
                         "stage": stage,
-                        "count": counts[stage],
+                        "count": commitment_wip_count,
                         "limit": limit,
-                        "message": f"{definition['label']} WIP 为 {counts[stage]}/{limit}，建议先收尾或调整已有事项。",
+                        "counter": "commitments",
+                        "message": f"{definition['label']} WIP 为 {commitment_wip_count}/{limit}，建议先收尾或调整已有事项。",
                     }
                 )
 
@@ -780,7 +815,8 @@ class ConsoleService:
         advisory_order = {"closeout_ready": 0, "aging": 1, "wip_exceeded": 2}
         advisories.sort(key=lambda value: advisory_order.get(value["type"], 99))
         return {
-            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "generated_at": now.isoformat().replace("+00:00", "Z"),
+            "commitment_projection": commitment_projection,
             "columns": columns,
             "cards": cards,
             "counts": counts,
@@ -832,24 +868,28 @@ class ConsoleService:
         return actions
 
     @staticmethod
-    def _days_since(value: str | None) -> int:
+    def _days_since(
+        value: str | None, *, now: datetime | None = None
+    ) -> int:
         if not value:
             return 0
         try:
             timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return 0
-        return max((datetime.now(timezone.utc) - timestamp).days, 0)
+        return max(((now or datetime.now(timezone.utc)) - timestamp).days, 0)
 
     @staticmethod
-    def _age_days(value: str | None) -> int | None:
+    def _age_days(
+        value: str | None, *, now: datetime | None = None
+    ) -> int | None:
         if not value:
             return None
         try:
             timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return None
-        return max((datetime.now(timezone.utc) - timestamp).days, 0)
+        return max(((now or datetime.now(timezone.utc)) - timestamp).days, 0)
 
     @staticmethod
     def _integer(value: Any, default: int = 0) -> int:
@@ -1135,11 +1175,13 @@ class ConsoleService:
             if action == "enter_trial":
                 board = self.board()
                 column = next(value for value in board["columns"] if value["id"] == "trial_active")
-                if column["count"] >= column["wip_limit"]:
+                if column["commitment_wip_count"] >= column["wip_limit"]:
                     wip_override_reason = str(payload.get("wip_override_reason", "")).strip()
                     if len(wip_override_reason) < 3:
                         raise ConsoleError(
-                            f"trial WIP is {column['count']}/{column['wip_limit']}; wip_override_reason is required"
+                            "trial commitment WIP is "
+                            f"{column['commitment_wip_count']}/{column['wip_limit']}; "
+                            "wip_override_reason is required"
                         )
                 current_card = next(
                     (value for value in board["cards"] if candidate_id in value["related_ids"]),

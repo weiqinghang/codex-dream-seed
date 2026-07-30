@@ -924,20 +924,23 @@ def retry_user_action(
 
 
 def list_user_actions(
-    path: Path, limit: int = 50, statuses: Iterable[str] | None = None
+    path: Path, limit: int | None = 50, statuses: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
     selected = tuple(sorted(set(statuses or ())))
     with open_readonly_database(path) as connection:
+        limit_clause = "" if limit is None else " LIMIT ?"
+        limit_values: tuple[int, ...] = () if limit is None else (limit,)
         if selected:
             placeholders = ",".join("?" for _ in selected)
             rows = connection.execute(
                 f"SELECT * FROM user_actions WHERE status IN ({placeholders}) "
-                "ORDER BY action_id DESC LIMIT ?",
-                (*selected, limit),
+                f"ORDER BY action_id DESC{limit_clause}",
+                (*selected, *limit_values),
             ).fetchall()
         else:
             rows = connection.execute(
-                "SELECT * FROM user_actions ORDER BY action_id DESC LIMIT ?", (limit,)
+                f"SELECT * FROM user_actions ORDER BY action_id DESC{limit_clause}",
+                limit_values,
             ).fetchall()
     return [
         {
