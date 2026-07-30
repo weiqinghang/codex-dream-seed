@@ -23,50 +23,150 @@ def _positive_integer(value: Any) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _normalized_fact_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_fact_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            if key != "payload_json"
+        }
+    if isinstance(value, list):
+        normalized = [_normalized_fact_value(item) for item in value]
+        return sorted(
+            normalized,
+            key=lambda item: json.dumps(
+                item, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ),
+        )
+    return value
+
+
+def _fact_signature(value: Any) -> str:
+    return json.dumps(
+        _normalized_fact_value(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
 def _fact_indexes(
     knowledge_items: list[dict[str, Any]],
 ) -> tuple[
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
     dict[str, dict[str, Any]],
+    dict[str, list[tuple[str, dict[str, Any]]]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
 ]:
-    candidates: dict[str, dict[str, Any]] = {}
-    adoptions: dict[str, dict[str, Any]] = {}
-    validations: dict[str, dict[str, Any]] = {}
+    candidate_groups: dict[str, dict[str, dict[str, Any]]] = {}
+    adoption_groups: dict[str, dict[str, dict[str, Any]]] = {}
+    validation_groups: dict[str, dict[str, dict[str, Any]]] = {}
     for item in knowledge_items:
         knowledge_id = str(item.get("knowledge_id") or "")
         for candidate in item.get("candidates", []):
             candidate_id = _stable_ref(candidate.get("candidate_id"), "CAN")
-            if candidate_id is not None:
-                candidates[candidate_id] = {
-                    **candidate,
-                    "knowledge_id": knowledge_id,
-                }
+            if candidate_id is None:
+                continue
+            fact = {
+                **candidate,
+                "candidate_id": candidate_id,
+                "knowledge_id": knowledge_id,
+            }
+            candidate_groups.setdefault(candidate_id, {}).setdefault(
+                _fact_signature(fact), fact
+            )
         for adoption in item.get("adoptions", []):
             adoption_id = _stable_ref(adoption.get("adoption_id"), "ADP")
-            candidate_id = _stable_ref(adoption.get("candidate_id"), "CAN")
-            if adoption_id is not None and candidate_id is not None:
-                adoptions[adoption_id] = {
-                    **adoption,
-                    "candidate_id": candidate_id,
-                    "knowledge_id": knowledge_id,
-                    "status": str(adoption.get("status") or "unknown"),
-                }
+            if adoption_id is None:
+                continue
+            fact = {
+                **adoption,
+                "adoption_id": adoption_id,
+                "knowledge_id": knowledge_id,
+                "status": str(adoption.get("status") or "unknown"),
+            }
+            adoption_groups.setdefault(adoption_id, {}).setdefault(
+                _fact_signature(fact), fact
+            )
         for validation in item.get("validations", []):
             validation_id = _stable_ref(validation.get("validation_id"), "VAL")
-            adoption_id = _stable_ref(validation.get("adoption_id"), "ADP")
-            adoption = adoptions.get(adoption_id or "")
-            if validation_id is not None and adoption is not None:
-                validations[validation_id] = {
-                    **adoption,
-                    **validation,
-                    "validation_id": validation_id,
-                    "adoption_id": adoption_id or "",
-                    "adoption_status": adoption.get("status"),
-                    "candidate_id": adoption["candidate_id"],
-                    "knowledge_id": knowledge_id,
-                }
-    return candidates, adoptions, validations
+            if validation_id is None:
+                continue
+            fact = {
+                **validation,
+                "validation_id": validation_id,
+                "knowledge_id": knowledge_id,
+            }
+            validation_groups.setdefault(validation_id, {}).setdefault(
+                _fact_signature(fact), fact
+            )
+
+    collisions: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for groups in (candidate_groups, adoption_groups, validation_groups):
+        for stable_id, variants in groups.items():
+            if len(variants) > 1:
+                collisions[stable_id] = sorted(variants.items())
+
+    candidates: dict[str, dict[str, Any]] = {}
+    adoptions: dict[str, dict[str, Any]] = {}
+    validations: dict[str, dict[str, Any]] = {}
+    orphan_adoptions: list[dict[str, Any]] = []
+    orphan_validations: list[dict[str, Any]] = []
+
+    for candidate_id, variants in candidate_groups.items():
+        if candidate_id not in collisions:
+            candidates[candidate_id] = next(iter(variants.values()))
+
+    for adoption_id, variants in adoption_groups.items():
+        if adoption_id in collisions:
+            continue
+        adoption = next(iter(variants.values()))
+        candidate_id = _stable_ref(adoption.get("candidate_id"), "CAN")
+        if candidate_id is None:
+            continue
+        if candidate_id in collisions:
+            orphan_adoptions.append(adoption)
+            continue
+        adoptions[adoption_id] = {
+            **adoption,
+            "candidate_id": candidate_id,
+        }
+
+    orphan_adoption_ids = {
+        str(adoption.get("adoption_id") or "") for adoption in orphan_adoptions
+    }
+    for validation_id, variants in validation_groups.items():
+        if validation_id in collisions:
+            continue
+        validation = next(iter(variants.values()))
+        adoption_id = _stable_ref(validation.get("adoption_id"), "ADP")
+        adoption = adoptions.get(adoption_id or "")
+        if adoption is None:
+            if (
+                adoption_id in collisions
+                or adoption_id in orphan_adoption_ids
+            ):
+                orphan_validations.append(validation)
+            continue
+        validations[validation_id] = {
+            **adoption,
+            **validation,
+            "validation_id": validation_id,
+            "adoption_id": adoption_id or "",
+            "adoption_status": adoption.get("status"),
+            "candidate_id": adoption["candidate_id"],
+            "knowledge_id": validation["knowledge_id"],
+        }
+    return (
+        candidates,
+        adoptions,
+        validations,
+        collisions,
+        orphan_adoptions,
+        orphan_validations,
+    )
 
 
 def _base_projection(
@@ -111,6 +211,92 @@ def _base_projection(
         "source_refs": sorted(set(source_refs)),
         "warnings": warnings,
     }
+
+
+def _collision_projection(
+    *,
+    stable_id: str,
+    rank: int,
+    candidate_id: str | None,
+    source_refs: list[str],
+) -> dict[str, Any]:
+    return _base_projection(
+        commitment_id="unknown",
+        projection_key=f"collision:{stable_id}:{rank:04d}",
+        identity_status="conflicted",
+        root_action_id="unknown",
+        candidate_id=candidate_id or "unknown",
+        confirmed_at=None,
+        stage="closeout",
+        source_refs=[
+            source_ref
+            for source_ref in source_refs
+            if any(
+                _stable_ref(source_ref, prefix) is not None
+                for prefix in ("ACT", "CAN", "ADP", "VAL")
+            )
+        ],
+        warnings=["identity_conflict"],
+    )
+
+
+def _knowledge_collision_projection(
+    stable_id: str,
+    rank: int,
+    fact: dict[str, Any],
+    adoptions: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    candidate_id: str | None = None
+    source_refs = [stable_id]
+    if stable_id.startswith("CAN-"):
+        candidate_id = stable_id
+    elif stable_id.startswith("ADP-"):
+        candidate_id = _stable_ref(fact.get("candidate_id"), "CAN")
+        if candidate_id is not None:
+            source_refs.append(candidate_id)
+    elif stable_id.startswith("VAL-"):
+        adoption_id = _stable_ref(fact.get("adoption_id"), "ADP")
+        if adoption_id is not None:
+            source_refs.append(adoption_id)
+            adoption = adoptions.get(adoption_id)
+            if adoption is not None:
+                candidate_id = _stable_ref(
+                    adoption.get("candidate_id"), "CAN"
+                )
+                if candidate_id is not None:
+                    source_refs.append(candidate_id)
+    return _collision_projection(
+        stable_id=stable_id,
+        rank=rank,
+        candidate_id=candidate_id,
+        source_refs=source_refs,
+    )
+
+
+def _orphan_collision_projection(
+    *,
+    stable_id: str,
+    candidate_id: str | None,
+    source_refs: list[str],
+) -> dict[str, Any]:
+    return _base_projection(
+        commitment_id="unknown",
+        projection_key=f"legacy:{stable_id}",
+        identity_status="conflicted",
+        root_action_id="unknown",
+        candidate_id=candidate_id or "unknown",
+        confirmed_at=None,
+        stage="closeout",
+        source_refs=[
+            source_ref
+            for source_ref in source_refs
+            if any(
+                _stable_ref(source_ref, prefix) is not None
+                for prefix in ("ACT", "CAN", "ADP", "VAL")
+            )
+        ],
+        warnings=["identity_conflict"],
+    )
 
 
 def _days_since(value: Any, now: datetime) -> int:
@@ -348,17 +534,18 @@ def _conservative_adjustment(
     )
 
 
-def _action_fact_signature(action: dict[str, Any]) -> tuple[Any, ...]:
-    payload = action.get("payload")
-    return (
-        action.get("action_type"),
-        action.get("status"),
-        action.get("knowledge_id"),
-        action.get("candidate_id"),
-        action.get("created_at"),
-        action.get("completed_at"),
-        action.get("error"),
-        json.dumps(payload, ensure_ascii=False, sort_keys=True),
+def _action_fact_signature(action: dict[str, Any]) -> str:
+    return _fact_signature(
+        {
+            "action_type": action.get("action_type"),
+            "status": action.get("status"),
+            "knowledge_id": action.get("knowledge_id"),
+            "candidate_id": action.get("candidate_id"),
+            "created_at": action.get("created_at"),
+            "completed_at": action.get("completed_at"),
+            "error": action.get("error"),
+            "payload": action.get("payload"),
+        }
     )
 
 
@@ -626,7 +813,14 @@ def project_commitments(
 ) -> dict[str, Any]:
     """Project confirmed trial roots into a privacy-reduced commitment read model."""
     projection_now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    candidates_index, adoptions, validations = _fact_indexes(knowledge_items)
+    (
+        candidates_index,
+        adoptions,
+        validations,
+        knowledge_collisions,
+        orphan_adoptions,
+        orphan_validations,
+    ) = _fact_indexes(knowledge_items)
     items: list[dict[str, Any]] = []
     roots: dict[str, dict[str, Any]] = {}
     roots_by_candidate: dict[str, set[str]] = {}
@@ -647,14 +841,49 @@ def project_commitments(
         action_id = _stable_ref(action.get("action_id"), "ACT")
         if action_id is not None:
             action_groups.setdefault(action_id, []).append(action)
-    for action in sorted(
-        actions, key=lambda value: str(value.get("action_id") or "")
-    ):
-        if action.get("action_type") != "enter_trial":
+
+    root_collision_action_ids: set[str] = set()
+    root_collision_candidate_ids: set[str] = set()
+    root_actions: list[dict[str, Any]] = []
+    for action_id in sorted(action_groups):
+        variants_by_signature = {
+            _action_fact_signature(action): action
+            for action in action_groups[action_id]
+        }
+        if not any(
+            action.get("action_type") == "enter_trial"
+            for action in variants_by_signature.values()
+        ):
             continue
-        root_action_id = _stable_ref(action.get("action_id"), "ACT")
-        if root_action_id is None:
+        if len(variants_by_signature) > 1:
+            root_collision_action_ids.add(action_id)
+            for rank, (_, action) in enumerate(
+                sorted(variants_by_signature.items()), start=1
+            ):
+                candidate_id = _stable_ref(
+                    action.get("candidate_id"), "CAN"
+                )
+                if candidate_id is not None:
+                    root_collision_candidate_ids.add(candidate_id)
+                items.append(
+                    _collision_projection(
+                        stable_id=action_id,
+                        rank=rank,
+                        candidate_id=candidate_id,
+                        source_refs=[
+                            source_ref
+                            for source_ref in (action_id, candidate_id)
+                            if source_ref is not None
+                        ],
+                    )
+                )
             continue
+        action = next(iter(variants_by_signature.values()))
+        if action.get("action_type") == "enter_trial":
+            root_actions.append(action)
+
+    for action in root_actions:
+        root_action_id = str(action["action_id"])
         candidate_id = _stable_ref(action.get("candidate_id"), "CAN")
         source_refs = [root_action_id]
         if candidate_id is not None:
@@ -684,10 +913,137 @@ def project_commitments(
         if candidate_id is not None:
             roots_by_candidate.setdefault(candidate_id, set()).add(root_action_id)
 
+    collided_candidate_ids = {
+        stable_id
+        for stable_id in knowledge_collisions
+        if stable_id.startswith("CAN-")
+    }
+    collided_adoption_ids = {
+        stable_id
+        for stable_id in knowledge_collisions
+        if stable_id.startswith("ADP-")
+    }
+    collided_validation_ids = {
+        stable_id
+        for stable_id in knowledge_collisions
+        if stable_id.startswith("VAL-")
+    }
+    for stable_id in sorted(knowledge_collisions):
+        for rank, (_, fact) in enumerate(
+            knowledge_collisions[stable_id], start=1
+        ):
+            items.append(
+                _knowledge_collision_projection(
+                    stable_id, rank, fact, adoptions
+                )
+            )
+
+    downstream_candidate_ids = {
+        candidate_id
+        for stable_id, variants in knowledge_collisions.items()
+        if stable_id.startswith("ADP-")
+        for _, fact in variants
+        if (
+            candidate_id := _stable_ref(
+                fact.get("candidate_id"), "CAN"
+            )
+        )
+    }
+    downstream_candidate_ids.update(
+        candidate_id
+        for fact in orphan_adoptions
+        if (
+            candidate_id := _stable_ref(
+                fact.get("candidate_id"), "CAN"
+            )
+        )
+    )
+    downstream_adoption_ids = {
+        adoption_id
+        for stable_id, variants in knowledge_collisions.items()
+        if stable_id.startswith("VAL-")
+        for _, fact in variants
+        if (
+            adoption_id := _stable_ref(
+                fact.get("adoption_id"), "ADP"
+            )
+        )
+    }
+    downstream_adoption_ids.update(
+        adoption_id
+        for fact in orphan_validations
+        if (
+            adoption_id := _stable_ref(
+                fact.get("adoption_id"), "ADP"
+            )
+        )
+    )
+    for fact in sorted(
+        orphan_adoptions,
+        key=lambda value: str(value.get("adoption_id") or ""),
+    ):
+        adoption_id = _stable_ref(fact.get("adoption_id"), "ADP")
+        candidate_id = _stable_ref(fact.get("candidate_id"), "CAN")
+        if adoption_id is None or adoption_id in downstream_adoption_ids:
+            continue
+        items.append(
+            _orphan_collision_projection(
+                stable_id=adoption_id,
+                candidate_id=candidate_id,
+                source_refs=[
+                    source_ref
+                    for source_ref in (candidate_id, adoption_id)
+                    if source_ref is not None
+                ],
+            )
+        )
+    for fact in sorted(
+        orphan_validations,
+        key=lambda value: str(value.get("validation_id") or ""),
+    ):
+        validation_id = _stable_ref(fact.get("validation_id"), "VAL")
+        adoption_id = _stable_ref(fact.get("adoption_id"), "ADP")
+        if validation_id is None:
+            continue
+        items.append(
+            _orphan_collision_projection(
+                stable_id=validation_id,
+                candidate_id=None,
+                source_refs=[
+                    source_ref
+                    for source_ref in (adoption_id, validation_id)
+                    if source_ref is not None
+                ],
+            )
+        )
+
+    for root_action_id, root in roots.items():
+        action = root["action"]
+        result = (action.get("payload") or {}).get("codex_result") or {}
+        candidate_id = _stable_ref(action.get("candidate_id"), "CAN")
+        adoption_id = (
+            _stable_ref(result.get("adoption_id"), "ADP")
+            if isinstance(result, dict)
+            else None
+        )
+        validation_id = (
+            _stable_ref(result.get("validation_id"), "VAL")
+            if isinstance(result, dict)
+            else None
+        )
+        if (
+            candidate_id in collided_candidate_ids
+            or adoption_id in collided_adoption_ids
+            or validation_id in collided_validation_ids
+        ):
+            blocked_roots.add(root_action_id)
+
     for action in actions:
         if (
             action.get("action_type") != "rollback"
             or action.get("status") != "completed"
+            or _stable_ref(action.get("action_id"), "ACT")
+            in root_collision_action_ids
         ):
             continue
         payload = action.get("payload") or {}
@@ -704,12 +1060,13 @@ def project_commitments(
     adjustment_groups: dict[str, list[dict[str, Any]]] = {}
     anonymous_adjustments: list[dict[str, Any]] = []
     for action in actions:
+        action_id = _stable_ref(action.get("action_id"), "ACT")
         if (
             action.get("action_type") != "validation_adjust"
             or action.get("status") != "completed"
+            or action_id in root_collision_action_ids
         ):
             continue
-        action_id = _stable_ref(action.get("action_id"), "ACT")
         if action_id is None:
             anonymous_adjustments.append(action)
             continue
@@ -920,12 +1277,13 @@ def project_commitments(
     terminal_groups: dict[str, list[dict[str, Any]]] = {}
     anonymous_terminals: list[dict[str, Any]] = []
     for action in actions:
+        action_id = _stable_ref(action.get("action_id"), "ACT")
         if (
             action.get("action_type") not in terminal_kinds
             or action.get("status") != "completed"
+            or action_id in root_collision_action_ids
         ):
             continue
-        action_id = _stable_ref(action.get("action_id"), "ACT")
         if action_id is None:
             anonymous_terminals.append(action)
         else:
@@ -1105,6 +1463,8 @@ def project_commitments(
             if (
                 candidate.get("status") == "accepted"
                 and candidate_id not in roots_by_candidate
+                and candidate_id not in root_collision_candidate_ids
+                and candidate_id not in downstream_candidate_ids
             ):
                 items.append(
                     _legacy_projection(
@@ -1148,6 +1508,8 @@ def project_commitments(
                     )
                 continue
             if adoption_id in linked_adoption_ids:
+                continue
+            if adoption_id in downstream_adoption_ids:
                 continue
             rolled_back = adoption.get("status") == "rolled_back"
             items.append(

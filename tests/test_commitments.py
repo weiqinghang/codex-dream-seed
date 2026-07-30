@@ -239,6 +239,329 @@ class CommitmentReadModelTests(unittest.TestCase):
             all(item["identity_status"] == "known" for item in read_model["items"])
         )
 
+    def test_exact_duplicate_root_fact_is_idempotent(self) -> None:
+        root_action_id = self._root_action("project", "script")
+        actions = list_user_actions(self.service.database, limit=None)
+        duplicate = copy.deepcopy(actions[0])
+
+        read_model = project_commitments(
+            self.service._items(),
+            actions + [duplicate],
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(read_model["wip_count"], 1)
+        self.assertEqual(len(read_model["items"]), 1)
+        self.assertEqual(read_model["items"][0]["commitment_id"], root_action_id)
+        self.assertEqual(read_model["items"][0]["identity_status"], "known")
+
+    def test_non_equivalent_duplicate_root_facts_are_deterministic_conflicts(
+        self,
+    ) -> None:
+        root_action_id = self._root_action("project", "script")
+        root = list_user_actions(self.service.database, limit=None)[0]
+        candidate_variant = copy.deepcopy(root)
+        candidate_variant["candidate_id"] = "CAN-9998"
+        knowledge_variant = copy.deepcopy(root)
+        knowledge_variant["knowledge_id"] = "KD-9998"
+        status_variant = copy.deepcopy(root)
+        status_variant["status"] = "failed"
+        payload_variant = copy.deepcopy(root)
+        payload_variant["payload"]["trial_plan"] = {
+            "scope": "cross_project",
+            "target_carrier": "skill",
+        }
+        variants = [
+            root,
+            candidate_variant,
+            knowledge_variant,
+            status_variant,
+            payload_variant,
+        ]
+
+        forward = project_commitments(
+            self.service._items(),
+            variants,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        reverse = project_commitments(
+            self.service._items(),
+            list(reversed(variants)),
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward["wip_count"], len(variants))
+        self.assertEqual(len(forward["items"]), len(variants))
+        self.assertFalse(
+            any(item["identity_status"] == "known" for item in forward["items"])
+        )
+        self.assertTrue(
+            all(
+                item["identity_status"] == "conflicted"
+                and item["commitment_id"] == "unknown"
+                and item["root_action_id"] == "unknown"
+                and root_action_id in item["source_refs"]
+                and item["projection_key"].startswith(
+                    f"collision:{root_action_id}:"
+                )
+                for item in forward["items"]
+            )
+        )
+        self.assertEqual(
+            len({item["projection_key"] for item in forward["items"]}),
+            len(variants),
+        )
+
+    def test_exact_duplicate_candidate_fact_is_idempotent(self) -> None:
+        items = self.service._items()
+        items[0]["candidates"].append(
+            copy.deepcopy(items[0]["candidates"][0])
+        )
+
+        read_model = project_commitments(
+            items,
+            [],
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(read_model["wip_count"], 1)
+        self.assertEqual(len(read_model["items"]), 1)
+        self.assertEqual(
+            read_model["items"][0]["projection_key"],
+            f"legacy:{self.candidate_id}",
+        )
+
+    def test_candidate_id_collision_is_deterministic_and_conservative(
+        self,
+    ) -> None:
+        root_action_id = self._root_action("project", "script")
+        actions = list_user_actions(self.service.database, limit=None)
+        items = self.service._items()
+        candidate_variant = copy.deepcopy(items[0]["candidates"][0])
+        candidate_variant["status"] = "rejected"
+        items[0]["candidates"].append(candidate_variant)
+        reversed_items = copy.deepcopy(items)
+        reversed_items[0]["candidates"].reverse()
+
+        legacy_forward = project_commitments(
+            items,
+            [],
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        legacy_reverse = project_commitments(
+            reversed_items,
+            [],
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        linked_forward = project_commitments(
+            items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        linked_reverse = project_commitments(
+            reversed_items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(legacy_forward, legacy_reverse)
+        self.assertEqual(legacy_forward["wip_count"], 2)
+        self.assertEqual(linked_forward, linked_reverse)
+        self.assertEqual(linked_forward["wip_count"], 3)
+        root = self._commitment(linked_forward, root_action_id)
+        self.assertTrue(root["active"])
+        self.assertEqual(root["stage"], "closeout")
+        self.assertIn("identity_conflict", root["warnings"])
+        conflicts = [
+            item
+            for item in linked_forward["items"]
+            if item["identity_status"] == "conflicted"
+        ]
+        self.assertEqual(len(conflicts), 2)
+        self.assertTrue(
+            all(
+                self.candidate_id in item["source_refs"]
+                and item["projection_key"].startswith(
+                    f"collision:{self.candidate_id}:"
+                )
+                for item in conflicts
+            )
+        )
+
+    def test_exact_duplicate_adoption_fact_is_idempotent(self) -> None:
+        root_action_id = self._root_action("project", "script")
+        adoption_id = record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "adoption_recorded",
+            {
+                "candidate_id": self.candidate_id,
+                "target": "Synthetic target",
+                "status": "applied",
+            },
+        )["data"]["adoption_id"]
+        transition_user_action(
+            self.service.database,
+            root_action_id,
+            "completed",
+            payload_update={"codex_result": {"adoption_id": adoption_id}},
+        )
+        items = self.service._items()
+        items[0]["adoptions"].append(
+            copy.deepcopy(items[0]["adoptions"][0])
+        )
+
+        read_model = project_commitments(
+            items,
+            list_user_actions(self.service.database, limit=None),
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(read_model["wip_count"], 1)
+        self.assertEqual(len(read_model["items"]), 1)
+        self.assertEqual(read_model["items"][0]["commitment_id"], root_action_id)
+        self.assertEqual(read_model["items"][0]["identity_status"], "known")
+
+    def test_adoption_id_collision_is_deterministic_and_conservative(
+        self,
+    ) -> None:
+        root_action_id = self._root_action("project", "script")
+        adoption_id = record_event(
+            self.workspace / "knowledge",
+            self.knowledge_id,
+            "adoption_recorded",
+            {
+                "candidate_id": self.candidate_id,
+                "target": "Synthetic target",
+                "status": "applied",
+            },
+        )["data"]["adoption_id"]
+        transition_user_action(
+            self.service.database,
+            root_action_id,
+            "completed",
+            payload_update={"codex_result": {"adoption_id": adoption_id}},
+        )
+        actions = list_user_actions(self.service.database, limit=None)
+        items = self.service._items()
+        adoption_variant = copy.deepcopy(items[0]["adoptions"][0])
+        adoption_variant["status"] = "rolled_back"
+        items[0]["adoptions"].append(adoption_variant)
+        reversed_items = copy.deepcopy(items)
+        reversed_items[0]["adoptions"].reverse()
+
+        forward = project_commitments(
+            items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        reverse = project_commitments(
+            reversed_items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward["wip_count"], 3)
+        root = self._commitment(forward, root_action_id)
+        self.assertTrue(root["active"])
+        self.assertEqual(root["stage"], "closeout")
+        self.assertIn("identity_conflict", root["warnings"])
+        conflicts = [
+            item
+            for item in forward["items"]
+            if item["identity_status"] == "conflicted"
+        ]
+        self.assertEqual(len(conflicts), 2)
+        self.assertTrue(
+            all(
+                adoption_id in item["source_refs"]
+                and item["projection_key"].startswith(
+                    f"collision:{adoption_id}:"
+                )
+                for item in conflicts
+            )
+        )
+
+    def test_exact_duplicate_validation_fact_is_idempotent(self) -> None:
+        root_action_id = self._root_action("project", "script")
+        _, validation_id = self._validation_chain()
+        transition_user_action(
+            self.service.database,
+            root_action_id,
+            "completed",
+            payload_update={"codex_result": {"validation_id": validation_id}},
+        )
+        items = self.service._items()
+        items[0]["validations"].append(
+            copy.deepcopy(items[0]["validations"][0])
+        )
+
+        read_model = project_commitments(
+            items,
+            list_user_actions(self.service.database, limit=None),
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(read_model["wip_count"], 1)
+        self.assertEqual(len(read_model["items"]), 1)
+        self.assertEqual(read_model["items"][0]["commitment_id"], root_action_id)
+        self.assertEqual(read_model["items"][0]["identity_status"], "known")
+
+    def test_validation_id_collision_is_deterministic_and_conservative(
+        self,
+    ) -> None:
+        root_action_id = self._root_action("project", "script")
+        _, validation_id = self._validation_chain()
+        transition_user_action(
+            self.service.database,
+            root_action_id,
+            "completed",
+            payload_update={"codex_result": {"validation_id": validation_id}},
+        )
+        actions = list_user_actions(self.service.database, limit=None)
+        items = self.service._items()
+        validation_variant = copy.deepcopy(items[0]["validations"][0])
+        validation_variant["status"] = "proven"
+        validation_variant["decision_source"] = "human:test"
+        items[0]["validations"].append(validation_variant)
+        reversed_items = copy.deepcopy(items)
+        reversed_items[0]["validations"].reverse()
+
+        forward = project_commitments(
+            items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+        reverse = project_commitments(
+            reversed_items,
+            actions,
+            now=datetime(2026, 7, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward["wip_count"], 3)
+        root = self._commitment(forward, root_action_id)
+        self.assertTrue(root["active"])
+        self.assertEqual(root["stage"], "closeout")
+        self.assertIn("identity_conflict", root["warnings"])
+        conflicts = [
+            item
+            for item in forward["items"]
+            if item["identity_status"] == "conflicted"
+        ]
+        self.assertEqual(len(conflicts), 2)
+        self.assertTrue(
+            all(
+                validation_id in item["source_refs"]
+                and item["projection_key"].startswith(
+                    f"collision:{validation_id}:"
+                )
+                for item in conflicts
+            )
+        )
+
     def test_completed_adjustment_increments_version_without_adding_wip(self) -> None:
         root_action_id = self._root_action("project", "script")
         validation_id = self._validation()
