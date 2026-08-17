@@ -193,6 +193,18 @@ class ConsoleServiceTests(unittest.TestCase):
         self.assertNotIn("deferred", board["counts"])
         self.assertEqual(board["cards"], [])
 
+    def test_proposed_can_entity_uses_inspiration_as_user_facing_term(self):
+        improvement = self.service.improvements()["items"][0]
+        self.assertEqual(improvement["lifecycle"], "candidate")
+        self.assertEqual(improvement["lifecycle_label"], "灵感")
+
+        static_root = Path(__file__).parents[1] / "codex_dream" / "console_static"
+        html = (static_root / "index.html").read_text(encoding="utf-8")
+        javascript = (static_root / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn("候选", html)
+        self.assertNotIn("候选", javascript)
+        self.assertIn("新灵感", javascript)
+
     def test_trial_decision_creates_a_handoff_and_refuses_stale_repeat(self):
         result = self.service.submit_candidate_action(
             {

@@ -66,7 +66,7 @@ const viewCopy = {
   home: ["TODAY", "今天需要你关注什么", "这里只放最关键的事项。决定以后，回到 Codex 继续真正的工作。"],
   board: ["COMMITMENT FLOW", "每一个梦境，现在走到哪里", "按泳道控制在制品、发现滞留，并优先关闭已经具备验收条件的事项。"],
   runs: ["DREAM HISTORY", "每一次梦境，都有清晰边界", "最新梦境在最上方；查看审阅范围、耗时、Token 记录与最终报告。"],
-  improvements: ["IMPROVEMENT TRACKING", "掌握每一项改进的旅程", "先看全局状态，再进入单项细节；候选池不会被 Top 5 截断。"],
+  improvements: ["IMPROVEMENT TRACKING", "掌握每一项改进的旅程", "先看全局状态，再进入单项细节；灵感池不会被 Top 5 截断。"],
   knowledge: ["KNOWLEDGE BASE", "已经沉淀了什么", "检查知识、载体、采用和验证是否真正落实。"],
   help: ["OPERATING HANDBOOK", "使用指南", "从第一次 Dream、稳定接续、验证判断到故障恢复。"],
 };
@@ -149,7 +149,7 @@ function renderHome() {
   $("#nav-attention-count").textContent = state.improvements.attention.length;
   $("#attention-list").innerHTML = state.improvements.attention.length
     ? state.improvements.attention.map(attentionCard).join("")
-    : '<div class="empty-state compact">现在没有需要你立即决定的事项。下一次做梦后，关键候选会出现在这里。</div>';
+    : '<div class="empty-state compact">现在没有需要你立即决定的事项。下一次做梦后，关键灵感会出现在这里。</div>';
   const recent = state.runs.slice(0, 3);
   $("#recent-runs").innerHTML = recent.length ? recent.map((run) => `
     <article class="run-card">
@@ -390,7 +390,7 @@ async function submitPolicy(event) {
 
 const filterLabels = {
   all: "全部",
-  candidate: "新候选",
+  candidate: "新灵感",
   planning: "计划中",
   deferred: "已暂缓",
   waiting_codex: "等待 Codex",
@@ -448,7 +448,7 @@ function showKnowledge(id) {
   const item = state.knowledge.find((value) => value.knowledge_id === id);
   if (!item) return;
   const groups = [
-    ["观察", item.observations], ["候选", item.candidates], ["人工决定", item.decisions],
+    ["观察", item.observations], ["灵感", item.candidates], ["人工决定", item.decisions],
     ["采用记录", item.adoptions], ["验证记录", item.validations],
   ];
   $("#knowledge-detail").innerHTML = `
@@ -459,7 +459,7 @@ function showKnowledge(id) {
     <section class="next-step"><p class="overline">NEXT ACTION</p><p>${escapeHtml(item.next_action || "等待下一次独立证据")}</p></section>`;
 }
 
-const lifecycleSteps = ["候选", "计划", "实验", "落实", "完成"];
+const lifecycleSteps = ["灵感", "计划", "实验", "落实", "完成"];
 const lifecycleIndex = {
   candidate: 0, planning: 1, waiting_codex: 1, codex_claimed: 1,
   deferred: 0, experiment: 2, review: 2, implementation_pending: 3, implementing: 3, completed: 4, ended: 0,
@@ -616,7 +616,7 @@ async function submitDecision(event) {
       $("#handoff-result").classList.remove("is-hidden");
     } else {
       closeDialog();
-      showToast(action === "reject" ? "已记录不采纳决定。" : "已暂存，候选仍保留在完整列表中。 ");
+      showToast(action === "reject" ? "已记录不采纳决定。" : "已暂存，灵感仍保留在完整列表中。 ");
     }
   } catch (error) {
     $("#form-status").textContent = error.message;

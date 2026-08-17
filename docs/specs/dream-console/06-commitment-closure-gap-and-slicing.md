@@ -16,7 +16,7 @@ repo-operations 变化；`codex_dream/`、`schemas/` 与 bundled Skill 产品面
 
 主要证据面：
 
-- `codex_dream/console.py`：Board 列、WIP policy、advisory、候选确认、Validation 收尾。
+- `codex_dream/console.py`：Board 列、WIP policy、advisory、灵感确认、Validation 收尾。
 - `codex_dream/knowledge.py`：Candidate、Adoption、Validation 状态、合同调整和 human decision
   要求。
 - `codex_dream/console_static/app.js`：首页注意力列表、Board Advisor、WIP override 与 Closeout UI。
@@ -49,7 +49,7 @@ repo-operations 变化；`codex_dream/`、`schemas/` 与 bundled Skill 产品面
 | Board 与 WIP | 五列 Board；待决策无上限；活动列可配置 WIP；主卡按 Candidate 链路去重 | 可作为承诺投影基础 |
 | 占用起点 | 用户确认试用计划后立即形成 `ACT-*` handoff 并进入 `trial_active` | 与契约起点基本一致 |
 | 调整版本 | `validation_contract_adjusted` 保存旧合同历史，原 Validation 继续使用同一身份 | 可支持“同一承诺调整仍为 1” |
-| 软约束 | 试用落实达到容量时要求 `wip_override_reason`，不会把候选静默改成终态 | 保留软门禁方向 |
+| 软约束 | 试用落实达到容量时要求 `wip_override_reason`，不会把灵感静默改成终态 | 保留软门禁方向 |
 | 到期信号 | Validation 达到样本目标或 `max_validation_days` 后进入 `closeout`，生成确定性 advisory | 可作为站内到期入口 |
 | 人工收尾 | 最终 Validation 状态需要 `decision_source`；UI 要求逐条复核成功标准 | 可作为 Human Closeout Gate 基础 |
 | 结果终态 | `proven`、`failed`、`inconclusive`、`rolled_back` 等可形成终态展示 | 需要重新校准产品含义 |
@@ -71,7 +71,7 @@ repo-operations 变化；`codex_dream/`、`schemas/` 与 bundled Skill 产品面
 
 ### GAP-CC-02：首页没有三个平衡维度
 
-当前首页 `attention` 主要从候选和待复核事项中按统一优先分数截取最多 5 项；Board Advisor
+当前首页 `attention` 主要从灵感和待复核事项中按统一优先分数截取最多 5 项；Board Advisor
 则简单取前三条 advisory。它们没有分别保证“最值得收尾”“最需要解阻”“容量/释放容量方案”的
 覆盖，也没有去重后展示多重触发原因。
 

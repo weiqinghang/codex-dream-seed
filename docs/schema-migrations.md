@@ -37,14 +37,14 @@ version. The adjacent chain remains the reference implementation and recovery pa
 V0 denotes the original unversioned project workspace. V1:
 
 - adds explicit workspace and knowledge schema versions;
-- converts legacy candidate artifact and session fields to `suggested_artifact` and
+- converts legacy inspiration (internal candidate) artifact and session fields to `suggested_artifact` and
   private `TASK-*` references;
 - adds observation task references;
 - records decision provenance;
 - normalizes the validation time-window field;
 - repairs duplicate observation IDs deterministically;
 - appends one `schema_migrated` event per knowledge item;
-- preserves session cursors, task maps, maturity, candidate decisions, adoptions,
+- preserves session cursors, task maps, maturity, inspiration decisions, adoptions,
   validations and sanitized reports.
 
 Ambiguous records require a private resolution file with a reason. Missing provenance is

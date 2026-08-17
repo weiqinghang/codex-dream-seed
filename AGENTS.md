@@ -11,7 +11,9 @@ of real user sessions and previously generated dream results.
 - Keep mutable user data in a separately initialized workspace.
 - Treat `state/` as private. Only sanitized `knowledge/` and `reports/` may be shared.
 - Do not advance a review cursor until semantic review artifacts have been persisted.
-- Do not accept, apply, reject, or validate a candidate without a traceable human decision.
+- Treat every `CAN-*` entity as a Dream inspiration. Internal candidate field names remain
+  compatibility interfaces; user-facing language must call it an inspiration (`灵感` in Chinese).
+- Do not accept, apply, reject, or validate an inspiration without a traceable human decision.
 
 ## Architecture
 

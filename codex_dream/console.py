@@ -988,7 +988,7 @@ class ConsoleService:
         if status in {"rejected", "superseded"}:
             return "ended", "已结束", "查看决定记录"
         if status == "proposed":
-            return "candidate", "候选", "查看并决定"
+            return "candidate", "灵感", "查看并决定"
         adoption = next(
             (
                 value
@@ -1143,7 +1143,7 @@ class ConsoleService:
         candidate_id = str(payload.get("candidate_id", ""))
         reason = str(payload.get("reason", "")).strip()
         if action not in CONSOLE_ACTIONS:
-            raise ConsoleError("unsupported candidate action")
+            raise ConsoleError("unsupported inspiration action")
         if not knowledge_id or not candidate_id:
             raise ConsoleError("knowledge_id and candidate_id are required")
         if not reason:
@@ -1163,10 +1163,10 @@ class ConsoleService:
                 None,
             )
             if candidate is None:
-                raise ConsoleError(f"unknown candidate: {candidate_id}")
+                raise ConsoleError(f"unknown inspiration: {candidate_id}")
             if candidate.get("status") != "proposed":
                 raise ConsoleError(
-                    f"candidate is already {candidate.get('status')}; stale decisions are refused"
+                    f"inspiration is already {candidate.get('status')}; stale decisions are refused"
                 )
 
             trial_plan = self._validated_trial_plan(payload) if action == "enter_trial" else None
@@ -1432,7 +1432,7 @@ def handler_factory(service: ConsoleService, token: str):
             except WorkspaceLockError as error:
                 self._json({"error": str(error)}, 409)
             except Exception:
-                self._json({"error": "candidate action failed; inspect local logs"}, 500)
+                self._json({"error": "inspiration action failed; inspect local logs"}, 500)
 
         def do_OPTIONS(self) -> None:
             self.send_error(HTTPStatus.FORBIDDEN)

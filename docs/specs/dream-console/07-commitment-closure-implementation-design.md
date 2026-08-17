@@ -67,7 +67,7 @@ Status。
 | `projection_key` | 稳定内部字符串 | 历史身份未知时用于刷新稳定与保守计数，不对外冒充业务身份 |
 | `identity_status` | `known|unknown|conflicted` | 多条根动作或断裂 lineage 必须显式冲突 |
 | `root_action_id` | `ACT-*|unknown` | 与 `commitment_id` 同锚点，便于 handoff/审计追踪 |
-| `candidate_id` | `CAN-*|unknown` | 原始候选 |
+| `candidate_id` | `CAN-*|unknown` | 原始灵感（内部 candidate 接口） |
 | `current_version` | 正整数或 `unknown` | 确认计划为版本 1；每次有效调整递增 |
 | `version_lineage` | 版本数组 | 包含 parent、发生时间、人的来源、假设和范围摘要 |
 | `confirmed_at` | UTC timestamp 或 `unknown` | 根确认动作的 `created_at` |

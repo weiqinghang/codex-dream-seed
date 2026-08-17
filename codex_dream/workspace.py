@@ -58,7 +58,8 @@ This directory contains one user's private Dream runtime state and sanitized kno
 - Keep `state/` private and outside Git.
 - Commit only sanitized `dream.toml`, `knowledge/`, `reports/`, and personal `tools/`.
 - Do not advance session cursors before semantic review artifacts are persisted.
-- Do not change candidate decisions, adoption, or final validation without a traceable human decision.
+- Treat every `CAN-*` entity as a Dream inspiration. Internal candidate field names remain compatibility interfaces.
+- Do not change inspiration decisions, adoption, or final validation without a traceable human decision.
 - Refuse normal writes when workspace or knowledge schema migration is required.
 """
 
