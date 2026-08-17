@@ -1,6 +1,6 @@
 ---
 name: codex-dream
-description: Incrementally review local Codex sessions as task trees, preserve effective practices, identify reusable work and shorter alternatives to detours, and maintain evidence-backed candidate knowledge without exposing private rollout data. Use when the user asks to "开始做梦", review recent Codex collaboration, build or update a Dream baseline, inspect pending session increments, generate a periodic Dream report, or collect validation evidence for previously adopted improvements.
+description: Incrementally review local Codex sessions as task trees, preserve effective practices, identify reusable work and shorter alternatives to detours, and maintain evidence-backed inspirations without exposing private rollout data. Use when the user asks to "开始做梦", review recent Codex collaboration, build or update a Dream baseline, inspect pending session increments, generate a periodic Dream report, or collect validation evidence for previously adopted improvements.
 ---
 
 # Codex Dream
@@ -12,6 +12,13 @@ Use [references/operating-handbook.md](references/operating-handbook.md) as the 
 user-facing semantics source. Read only the relevant section: sections 1-2 for a first Dream, section 5 for Console
 handoff, section 6 for validation/closeout, and section 7 for recovery. Do not duplicate or
 silently redefine the five board states in this Skill.
+
+## Terminology
+
+Call every `CAN-*` lifecycle entity an **inspiration** (`灵感` in Chinese). The internal
+names `candidate_id`, `candidates`, and `candidate_proposed` remain compatibility interfaces,
+not user-facing terminology. In Chinese conversation, reports, and UI copy, always say
+“灵感”, never “候选”.
 
 If the data-plane command is missing while working from a fresh seed checkout, follow the
 repository `AGENTS.md` and run `python3 scripts/bootstrap.py` before attempting a Dream run.
@@ -166,10 +173,10 @@ not hide accumulated problems.
 
 For each review unit:
 
-1. Record observations and candidates with stable `TASK-*` evidence references.
+1. Record observations and inspirations (`CAN-*`) with stable `TASK-*` evidence references.
 2. Update an existing knowledge item when the pattern already exists; do not create a
    duplicate title for new evidence.
-   When proposing a candidate, also persist deterministic ranking inputs when available:
+   When proposing an inspiration, also persist deterministic ranking inputs when available:
    recent and cumulative trigger counts, persistence days, value impact, and detour cost.
 3. Write the sanitized report or knowledge artifact.
 4. Run `codex-dream privacy-audit`.
@@ -194,10 +201,10 @@ report has not passed privacy audit.
 
 ## Stop at the human gate
 
-Create and update only `proposed` candidates unless the user supplies a traceable decision.
+Create and update only `proposed` inspirations unless the user supplies a traceable decision.
 Do not modify external projects, install generated Skills, edit `AGENTS.md`, schedule jobs,
-or apply candidates during a Dream run. Present at most five high-value candidates and wait
+or apply inspirations during a Dream run. Present at most five high-value inspirations and wait
 for the user to enter a confirmed trial, reject, defer, or request more evidence. The visible
-five are an attention window, not the complete candidate pool. Rank both acute recent signals
+five are an attention window, not the complete inspiration pool. Rank both acute recent signals
 and chronic recurring problems so an older unresolved issue can return to the attention window
 after accumulating enough burden.

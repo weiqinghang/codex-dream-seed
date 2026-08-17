@@ -37,5 +37,5 @@
 - 稳定安装源是默认分支 `product` 或 immutable `v0.4.0`，不是 `develop`。
 - 首次 bootstrap 只展示 30 天 inventory，不建立 ledger；需要用户确认后才处理 Session。
 - V1 升级必须迁移到新目标并验证后切换默认指针，旧 Workspace 保留为回退来源。
-- Console 只监听本机回环地址，不做模型语义判断，也不自动接受、拒绝、采用或验证候选。
+- Console 只监听本机回环地址，不做模型语义判断，也不自动接受、拒绝、采用或验证灵感。
 - 支持的是本机 Codex rollout JSONL；浏览器验收使用合成 Workspace，不代表任何个人数据质量。

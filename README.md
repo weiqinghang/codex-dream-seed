@@ -11,9 +11,21 @@ Codex Dream Seed 是一套本地优先、跨项目、增量运行的 Codex 协�
 2. 多次出现、可能抽象成 Skill、脚本、模板、检查器或规则的重复工作；
 3. 当时已有信息下本可以更直接完成的绕路。
 
-它不是一个“自动纠错机器人”。第一阶段只生成带证据的候选，不会自行修改你的
-项目、`AGENTS.md`、Skills 或自动化。候选的接受、拒绝、采用和最终验证始终需要
+它不是一个“自动纠错机器人”。第一阶段只生成带证据的**灵感**，不会自行修改你的
+项目、`AGENTS.md`、Skills 或自动化。灵感的试用、拒绝、采用和最终验证始终需要
 可追溯的人工决定。
+
+## 正式术语：灵感
+
+Dream 把从观察中形成、等待人决定是否试用的 `CAN-*` 生命周期实体正式称为
+**灵感**。`CAN`、`candidate_id`、`candidates`、`candidate_proposed` 等名称只作为
+稳定 ID、数据字段和兼容接口继续保留；用户界面、报告、Skill 和说明文档统一使用
+“灵感”，不再把它称为“候选”。
+
+```text
+梦境 → 观察（OBS）→ 灵感（CAN）→ 决定（DEC）→ 采纳（ADP）
+     → 试用验证（VAL）→ 证据（EVD）→ 收尾
+```
 
 > 当前稳定版本为 `0.4.0`，面向已经在本机使用 Codex、愿意由 Codex 按预览结果完成
 > 初始化的普通用户。默认只支持 Codex 本机 rollout JSONL，且不会把 session 内容上传到
@@ -52,7 +64,7 @@ workspace 即可。
 - 把 Codex 原生 parent/sub-agent rollouts 合并成一个任务树案例；
 - 私有状态与可分享知识分开存储；
 - 使用稳定 `KD/OBS/CAN/DEC/ADP/VAL/EVD` ID 和追加式时间线；
-- 将知识成熟度、候选决定、采用状态和验证结果保持为四条独立生命周期；
+- 将知识成熟度、灵感决定、采用状态和验证结果保持为四条独立生命周期；
 - 在分享或提交前扫描 session UUID、绝对用户路径、rollout 路径和常见密钥格式；
 - 测试全部使用合成 session，不读取真实历史。
 
@@ -116,7 +128,7 @@ Bootstrap 会自动：
 5. 只读预览最近 30 天的 session 数量，然后停在人工确认门。
 
 默认运行不写任何内容。Bootstrap 不会自动建立首次 ledger，不会读取语义消息，也不会
-接受或应用知识候选。需要自定义位置时传入 `--workspace <path>`。
+试用或应用灵感。需要自定义位置时传入 `--workspace <path>`。
 
 ## 手动安装项目内核
 
@@ -143,7 +155,7 @@ py -m pip install -e .
 ```text
 codex-dream             workspace、session ledger、增量游标和隐私检查
 codex-dream-review      生成私有任务树审阅卡
-codex-dream-knowledge   管理知识、候选、采用和验证生命周期
+codex-dream-knowledge   管理知识、灵感、采用和验证生命周期
 codex-dream-console     启动只监听本机回环地址的 Dream Console
 ```
 
@@ -373,11 +385,11 @@ codex-dream-console status
 稳定版 0.4.0 提供经过端到端验收的 Console Flow Board。默认打开
 `http://127.0.0.1:8765`。Console 是 Codex 的轻量复盘伴侣，提供首页注意力窗口、推进泳道、
 WIP/老化/收尾建议、梦境时间线、改进追踪和知识库。它不调用模型、不做语义判断，也不修改目标项目。
-首页最多展示 5 项，但完整候选池仍保留在“改进追踪”中；排序同时考虑近期触发和长期
+首页最多展示 5 项，但完整灵感池仍保留在“改进追踪”中；排序同时考虑近期触发和长期
 累积负担。
 
 推进看板按 Candidate、Adoption、Validation 的现有事实源去重；Dream 运行历史保留在独立的
-“梦境”页面。待决策候选作为无上限 Inbox，不计入活跃 WIP；其余活动列显示 WIP、当前
+“梦境”页面。待决策灵感作为无上限 Inbox，不计入活跃 WIP；其余活动列显示 WIP、当前
 Workspace 上限与最老年龄。用户可以按项目、范围和健康度筛选，并按价值/影响面、提出时间或
 Dream 提及次数排序；“验证中”还可以独立按合格任务进度比例或反馈总数排序。验证卡的构成条
 用绿色、砖红和灰色区分正向、负向与混合/未定的合格证据，详情同时解释适用条件、成功标准、
@@ -394,7 +406,7 @@ codex-dream run-fail DREAM-0001 --error "依赖暂时不可用"
 codex-dream run-resume DREAM-0001 --reason "依赖已经恢复"
 ```
 
-用户可暂缓、拒绝候选，或在确认作用范围、预期固化载体、观察期限和成功标准后制定试用
+用户可暂缓、拒绝灵感，或在确认作用范围、预期固化载体、观察期限和成功标准后制定试用
 计划。计划确认后只会进入 `等待 Codex 接续`，不会被伪装成已经开始实验。页面会明确提示
 用户回到 Codex，并提供含稳定 `ACT-*`、Workspace fingerprint 和 attempt 的新 Session
 接续指令。不得用“刚才那项”或最近项猜测：
@@ -456,13 +468,13 @@ codex-dream \
 语境，但仍不应包含密钥。安静 24 小时或行数足够只表示“适合审阅”，不等于已完成
 语义审阅，不能据此自动 checkpoint。
 
-## 知识与候选生命周期
+## 知识与灵感生命周期
 
 Codex Dream 把四种状态分开：
 
 ```text
 knowledge: observed → emerging → established → retired
-candidate: proposed → accepted | rejected | superseded
+inspiration (internal candidate/CAN): proposed → accepted | rejected | superseded
 adoption:  planned → applied | rolled_back
 validation: pending → validating → proven | failed | inconclusive
 console handoff: handoff_pending → claimed → completed | failed
@@ -475,7 +487,7 @@ Console handoff 是独立的操作状态：`completed` 只表示 Codex 已经处
 - 至少两个独立案例后才考虑 `emerging`；
 - 通常至少三个案例且适用边界清楚后才考虑 `established`；
 - 至少跨两个项目出现，才考虑跨项目或全局能力；
-- 高影响单次事件可以成为 `once` 候选，但不能描述为重复规律。
+- 高影响单次事件可以成为 `once` 灵感，但不能描述为重复规律。
 
 创建知识项：
 
@@ -497,8 +509,8 @@ codex-dream-knowledge \
   --data-file observation.json
 ```
 
-候选结构模板位于 `templates/candidate.json`，验证合同 schema 位于
-`schemas/validation-contract.schema.json`。只有 `accepted` 候选才能记录采用，实际采用
+灵感结构模板位于兼容路径 `templates/candidate.json`，验证合同 schema 位于
+`schemas/validation-contract.schema.json`。只有 `accepted` 灵感才能记录采用，实际采用
 后必须建立验证合同。
 
 查看知识视图和所有活跃验证：
@@ -556,8 +568,8 @@ codex_dream/                 Python 确定性内核
 ├── console_static/          无外部依赖的 Console 页面
 └── workspace.py             workspace 初始化、配置与 doctor
 skills/codex-dream/          可选语义控制面 Skill
-schemas/                     知识项、生命周期事件、候选和验证合同
-templates/                   候选与报告模板
+schemas/                     知识项、生命周期事件、灵感和验证合同
+templates/                   灵感与报告模板
 tests/                       只使用合成 rollout 的测试
 ```
 
@@ -595,7 +607,7 @@ python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py \
 - session 格式发生不兼容变化时需要更新适配器；
 - 语义结论由 Codex 按 Skill 协议生成，CLI 不假装能用关键词替代判断；
 - `privacy-audit` 只能发现一组高风险模式，不能证明不存在所有隐私信息；
-- 自动定时运行、外部上传和自动采用候选均不属于默认能力。
+- 自动定时运行、外部上传和自动采用灵感均不属于默认能力。
 
 ## License
 

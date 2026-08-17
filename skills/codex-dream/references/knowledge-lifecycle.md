@@ -4,10 +4,14 @@ Keep four independent state axes:
 
 ```text
 knowledge: observed -> emerging -> established -> retired
-candidate: proposed -> accepted | rejected | superseded
+inspiration (internal candidate/CAN): proposed -> accepted | rejected | superseded
 adoption:  planned -> applied | rolled_back
 validation: pending -> validating -> proven | failed | inconclusive
 ```
+
+Every `CAN-*` entity is formally called an **inspiration** (`灵感` in Chinese). Internal
+candidate field names and event types remain stable compatibility interfaces. Never expose
+“候选” as the Chinese lifecycle term.
 
 Dream Console adds a fifth, operational axis. It records whether Codex has received and
 processed a human-confirmed plan; it does not replace any knowledge state:
@@ -23,16 +27,16 @@ Use one stable `KD-*` item for a durable concept. Append facts to `timeline.json
 current snapshot in `item.json`, and regenerate `summary.md`. Reports reference knowledge IDs;
 they are not the source of truth.
 
-Every candidate must include confidence, frequency, scope, project labels, `TASK-*` references,
+Every inspiration must include confidence, frequency, scope, project labels, `TASK-*` references,
 observation, minimal evidence summaries, interpretation, cause, impact, recommended action,
 artifact type, outline, limitations, counterexamples, and a validation plan.
 
 When the evidence supports it, include `priority_factors` with recent and cumulative trigger
 counts, persistence days, value impact, and detour cost. These are deterministic ranking inputs,
 not a model verdict. The Console ranks the full pool and displays at most five items requiring
-attention; older chronic candidates must remain eligible to re-enter that window.
+attention; older chronic inspirations must remain eligible to re-enter that window.
 
-Only a traceable human decision changes a candidate from `proposed`. Only accepted candidates
+Only a traceable human decision changes an inspiration from `proposed`. Only accepted inspirations
 may gain adoption records. Starting validation requires a contract with applicability,
 expected behavior, observable signals, success criteria, failure signals, target eligible task
 count, and maximum validation days.

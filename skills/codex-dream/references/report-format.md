@@ -13,8 +13,8 @@ Use this order:
 4. Highest-value reusable work.
 5. Detours most worth shortening.
 6. Cross-project patterns and project-specific patterns.
-7. New candidates, new evidence for existing candidates, conflicts, and counterexamples.
-8. A small set of high-value candidates for user review.
+7. New inspirations (`CAN-*`), new evidence for existing inspirations, conflicts, and counterexamples.
+8. A small set of high-value inspirations for user review.
 9. Evidence gaps and items to continue observing.
 
 Prefer a few evidence-backed conclusions over comprehensive-looking filler. Do not repeat old

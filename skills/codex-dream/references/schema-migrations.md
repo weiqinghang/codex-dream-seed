@@ -5,7 +5,7 @@
 - Run every registered adjacent migration in version order.
 - Never invent task references or human decisions; collect an explicit private
   resolution with a reason when legacy evidence is ambiguous.
-- Preserve cursor fingerprints, task-tree mappings, knowledge maturity, candidate,
+- Preserve cursor fingerprints, task-tree mappings, knowledge maturity, inspirations (internal candidates),
   adoption and validation state.
 - Verify stable-ID uniqueness, allocator safety, lifecycle references, record counts and
   privacy before switching workspaces.

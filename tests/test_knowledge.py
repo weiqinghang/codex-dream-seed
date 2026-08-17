@@ -179,6 +179,8 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertIn("KD-0001", rendered)
         self.assertIn("OBS-0001", rendered)
         self.assertIn(candidate_id, rendered)
+        self.assertIn("## 灵感与决定", rendered)
+        self.assertNotIn("## 候选与决定", rendered)
         self.assertIn("project-x/AGENTS.md", rendered)
         self.assertIn("1 / 10", rendered)
 

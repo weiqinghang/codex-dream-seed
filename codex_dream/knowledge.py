@@ -235,9 +235,9 @@ def record_event(
             raise ValueError(f"unsupported maturity: {maturity}")
         item["maturity"] = maturity
     elif event_type == "candidate_proposed":
-        _require_fields(payload, CANDIDATE_FIELDS, "candidate")
+        _require_fields(payload, CANDIDATE_FIELDS, "inspiration")
         if payload["kind"] not in KINDS:
-            raise ValueError(f"unsupported candidate kind: {payload['kind']}")
+            raise ValueError(f"unsupported inspiration kind: {payload['kind']}")
         for field, allowed in (
             ("confidence", CONFIDENCES),
             ("frequency", FREQUENCIES),
@@ -246,9 +246,9 @@ def record_event(
             ("suggested_artifact", ARTIFACT_TYPES),
         ):
             if payload[field] not in allowed:
-                raise ValueError(f"unsupported candidate {field}: {payload[field]}")
+                raise ValueError(f"unsupported inspiration {field}: {payload[field]}")
         if any(not str(task_ref).startswith("TASK-") for task_ref in payload["task_refs"]):
-            raise ValueError("candidate task_refs must contain only private TASK-* references")
+            raise ValueError("inspiration task_refs must contain only private TASK-* references")
         payload.setdefault("candidate_id", _allocate(index, "CAN"))
         payload.setdefault("status", "proposed")
         payload.setdefault("proposed_at", timestamp)
@@ -263,7 +263,7 @@ def record_event(
         payload.setdefault("decided_at", timestamp)
         decision = payload["decision"]
         if decision not in {"accepted", "rejected", "superseded"}:
-            raise ValueError(f"unsupported candidate decision: {decision}")
+            raise ValueError(f"unsupported inspiration decision: {decision}")
         candidate = _find(item["candidates"], "candidate_id", payload["candidate_id"])
         candidate["status"] = decision
         item["decisions"].append(payload)
@@ -276,7 +276,7 @@ def record_event(
             raise ValueError(f"unsupported adoption status: {payload['status']}")
         candidate = _find(item["candidates"], "candidate_id", payload["candidate_id"])
         if candidate.get("status") != "accepted":
-            raise ValueError("candidate must be accepted before adoption is recorded")
+            raise ValueError("inspiration must be accepted before adoption is recorded")
         item["adoptions"].append(payload)
     elif event_type == "adoption_status_changed":
         if payload.get("status") not in ADOPTION_STATUSES:
@@ -429,7 +429,7 @@ def render_lifecycle(item: dict[str, Any]) -> str:
     else:
         lines.append("- 暂无")
 
-    lines.extend(["", "## 候选与决定", ""])
+    lines.extend(["", "## 灵感与决定", ""])
     candidates = item.get("candidates", [])
     if candidates:
         for candidate in candidates:
